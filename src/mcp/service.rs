@@ -355,13 +355,40 @@ fn tool_error(message: impl Into<String>) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message.into())])
 }
 
+#[derive(Default)]
+struct ByteCounter {
+    bytes: usize,
+}
+
+impl std::io::Write for ByteCounter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.bytes = self.bytes.saturating_add(buffer.len());
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct ToolResponseFrame<'a> {
+    jsonrpc: &'static str,
+    id: &'a RequestId,
+    result: &'a CallToolResult,
+}
+
 fn bounded_tool_result(result: CallToolResult, request_id: &RequestId) -> CallToolResult {
-    let serialized = serde_json::to_vec(&serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "result": &result,
-    }));
-    if serialized.is_ok_and(|frame| frame.len() <= MCP_FRAME_MAX_BYTES) {
+    let mut counter = ByteCounter::default();
+    let serialized = serde_json::to_writer(
+        &mut counter,
+        &ToolResponseFrame {
+            jsonrpc: "2.0",
+            id: request_id,
+            result: &result,
+        },
+    );
+    if serialized.is_ok() && counter.bytes <= MCP_FRAME_MAX_BYTES {
         return result;
     }
 

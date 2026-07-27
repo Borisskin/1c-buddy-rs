@@ -1041,69 +1041,11 @@ fn build_exact_instruction(name: &str, arguments: &Map<String, Value>) -> String
     )
 }
 
-#[must_use]
-#[cfg(test)]
-pub fn rename_1c_markdown_fences(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let mut inside_fence = false;
-    let mut position = 0;
-
-    while position < input.len() {
-        let (content_end, line_end) = next_line(input, position);
-        let line = &input[position..content_end];
-        let indent_length = line.bytes().take_while(|byte| *byte == b' ').count().min(4);
-        let markdown = if indent_length <= 3 {
-            &line[indent_length..]
-        } else {
-            ""
-        };
-
-        if !inside_fence && matches!(markdown, "```1С" | "```1C" | "```1C (BSL)") {
-            output.push_str(&line[..indent_length]);
-            output.push_str("```bsl");
-            inside_fence = true;
-        } else {
-            output.push_str(line);
-            if let Some(after_fence) = markdown.strip_prefix("```") {
-                if inside_fence && after_fence.trim().is_empty() {
-                    inside_fence = false;
-                } else if !inside_fence {
-                    inside_fence = true;
-                }
-            }
-        }
-        output.push_str(&input[content_end..line_end]);
-        position = line_end;
-    }
-    output
-}
-
-#[cfg(test)]
-fn next_line(input: &str, start: usize) -> (usize, usize) {
-    let bytes = input.as_bytes();
-    let mut index = start;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'\n' => return (index, index + 1),
-            b'\r' => {
-                let end = if bytes.get(index + 1) == Some(&b'\n') {
-                    index + 2
-                } else {
-                    index + 1
-                };
-                return (index, end);
-            }
-            _ => index += 1,
-        }
-    }
-    (bytes.len(), bytes.len())
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::{Map, Value, json};
 
-    use super::{CatalogErrorKind, ExecutionRoute, ToolCatalog, rename_1c_markdown_fences};
+    use super::{CatalogErrorKind, ExecutionRoute, ToolCatalog};
     use crate::config::CallMode;
 
     const NAMES: [&str; 8] = [
@@ -1481,30 +1423,5 @@ mod tests {
             let standard_call = standard.prepare(name, &arguments).unwrap();
             assert!(matches!(standard_call.route(), ExecutionRoute::Message));
         }
-    }
-
-    #[test]
-    fn markdown_cleanup_only_renames_the_opening_fence_designation() {
-        let source = concat!(
-            "До Ａ\u{301}\r\n",
-            "```1C (BSL)\r\n",
-            "Строка = \"```1C\";\r\n",
-            "\u{0001}\r\n",
-            "```\r\n",
-            "После"
-        );
-        let cleaned = rename_1c_markdown_fences(source);
-
-        assert_eq!(
-            cleaned,
-            concat!(
-                "До Ａ\u{301}\r\n",
-                "```bsl\r\n",
-                "Строка = \"```1C\";\r\n",
-                "\u{0001}\r\n",
-                "```\r\n",
-                "После"
-            )
-        );
     }
 }

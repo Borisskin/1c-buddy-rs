@@ -117,7 +117,7 @@ Codex хранит настройки MCP в `%USERPROFILE%\.codex\config.toml` 
 
 ```toml
 [mcp_servers.onec_buddy]
-command = 'c:\tools\onec-buddy-mcp.exe'
+command = 'C:\tools\onec-buddy-mcp\onec-buddy-mcp.exe'
 env_vars = ['ONEC_AI_TOKEN']
 ```
 
@@ -134,7 +134,7 @@ Cursor читает настройки MCP из `%USERPROFILE%\.cursor\mcp.json`
   "mcpServers": {
     "onec-buddy": {
       "type": "stdio",
-      "command": "c:\\tools\\onec-buddy-mcp.exe",
+      "command": "C:\\tools\\onec-buddy-mcp\\onec-buddy-mcp.exe",
       "env": {
         "ONEC_AI_TOKEN": "${env:ONEC_AI_TOKEN}"
       }
@@ -156,7 +156,7 @@ Claude Desktop читает `%APPDATA%\Claude\claude_desktop_config.json`. Аб�
 {
   "mcpServers": {
     "onec-buddy": {
-      "command": "c:\\tools\\onec-buddy-mcp.exe"
+      "command": "C:\\tools\\onec-buddy-mcp\\onec-buddy-mcp.exe"
     }
   }
 }

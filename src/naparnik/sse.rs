@@ -150,19 +150,52 @@ fn merge_text(accumulated: &mut String, next: &str) {
         return;
     }
 
-    let max_overlap = accumulated.len().min(next.len());
-    let overlap = (1..=max_overlap)
-        .rev()
-        .find(|&length| {
-            accumulated.is_char_boundary(accumulated.len() - length)
-                && next.is_char_boundary(length)
-                && accumulated[accumulated.len() - length..] == next[..length]
-        })
-        .unwrap_or(0);
+    let overlap = suffix_prefix_overlap(accumulated, next);
     if overlap == 0 {
         accumulated.push_str("\n\n");
     }
     accumulated.push_str(&next[overlap..]);
+}
+
+fn suffix_prefix_overlap(accumulated: &str, next: &str) -> usize {
+    let mut max_overlap = accumulated.len().min(next.len());
+    while !next.is_char_boundary(max_overlap) {
+        max_overlap -= 1;
+    }
+    if max_overlap == 0 {
+        return 0;
+    }
+
+    let pattern = &next.as_bytes()[..max_overlap];
+    let mut prefix = vec![0_u32; pattern.len()];
+    for index in 1..pattern.len() {
+        let mut matched = prefix[index - 1] as usize;
+        while matched > 0 && pattern[index] != pattern[matched] {
+            matched = prefix[matched - 1] as usize;
+        }
+        if pattern[index] == pattern[matched] {
+            matched += 1;
+        }
+        prefix[index] = matched as u32;
+    }
+
+    let mut start = accumulated.len() - max_overlap;
+    while !accumulated.is_char_boundary(start) {
+        start += 1;
+    }
+
+    let mut matched = 0;
+    for &byte in &accumulated.as_bytes()[start..] {
+        while matched > 0 && (matched == pattern.len() || pattern[matched] != byte) {
+            matched = prefix[matched - 1] as usize;
+        }
+        if pattern[matched] == byte {
+            matched += 1;
+        }
+    }
+
+    debug_assert!(next.is_char_boundary(matched));
+    matched
 }
 
 pub async fn parse_response_stream<S, B, E>(
@@ -783,7 +816,7 @@ mod tests {
     use futures_util::stream;
     use serde_json::Value;
 
-    use super::{AssistantResponse, parse_stream_for_test};
+    use super::{AssistantResponse, merge_text, parse_stream_for_test};
     use crate::error::{ClientCallError, ToolFailureKind};
     use crate::limits::{SSE_EVENT_MAX_BYTES, SSE_STREAM_MAX_BYTES};
     use crate::naparnik::client::CallContext;
@@ -809,6 +842,26 @@ mod tests {
             ClientCallError::Failure(failure) => failure.kind(),
             ClientCallError::Cancelled => panic!("unexpected cancellation"),
         }
+    }
+
+    #[test]
+    fn merge_text_preserves_an_overlap_larger_than_eight_kibibytes() {
+        let overlap = "аб".repeat(5_000);
+        let mut accumulated = format!("начало-{overlap}");
+        let next = format!("{overlap}-конец");
+
+        merge_text(&mut accumulated, &next);
+
+        assert_eq!(accumulated, format!("начало-{overlap}-конец"));
+    }
+
+    #[test]
+    fn merge_text_handles_a_byte_limit_inside_a_unicode_scalar() {
+        let mut accumulated = "x".to_owned();
+
+        merge_text(&mut accumulated, "аб");
+
+        assert_eq!(accumulated, "x\n\nаб");
     }
 
     #[tokio::test]

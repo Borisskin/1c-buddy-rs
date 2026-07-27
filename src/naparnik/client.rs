@@ -138,9 +138,10 @@ impl NaparnikClient {
 
     fn build(
         base_url: Url,
-        authorization: HeaderValue,
+        mut authorization: HeaderValue,
         https_only: bool,
     ) -> Result<Self, ToolFailure> {
+        authorization.set_sensitive(true);
         let mut builder = Client::builder()
             .use_rustls_tls()
             .redirect(redirect::Policy::none())
@@ -684,6 +685,14 @@ mod tests {
     use crate::naparnik::types::Conversation;
 
     const TEST_AUTHORIZATION: &str = "test-placeholder-not-a-real-token";
+
+    #[test]
+    fn authorization_header_is_marked_sensitive() {
+        let base_url = reqwest::Url::parse("http://127.0.0.1").expect("test URL is valid");
+        let client = NaparnikClient::for_test(base_url).expect("test client must build");
+
+        assert!(client.authorization.is_sensitive());
+    }
 
     #[derive(Debug)]
     struct CapturedRequest {

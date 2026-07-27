@@ -185,25 +185,6 @@ where
                     if frame.is_empty() {
                         continue;
                     }
-                    if let Some(id) = malformed_tool_call_id(&frame) {
-                        let response = ServerJsonRpcMessage::error(
-                            ProtocolFailure::new(
-                                ProtocolFailureKind::InvalidParams,
-                                "tools/call parameters are invalid",
-                            )
-                            .into_mcp_error(),
-                            Some(id),
-                        );
-                        if let Err(send_error) = self.writer.lock().await.send(response).await {
-                            tracing::warn!(
-                                %send_error,
-                                "failed to report invalid tools/call parameters"
-                            );
-                            self.shutdown.cancel();
-                            return None;
-                        }
-                        continue;
-                    }
                     let mut framed = BytesMut::from(frame.as_slice());
                     framed.put_u8(b'\n');
                     match self.decoder.decode(&mut framed) {
@@ -271,25 +252,6 @@ where
     }
 }
 
-fn malformed_tool_call_id(frame: &[u8]) -> Option<RequestId> {
-    let value = serde_json::from_slice::<serde_json::Value>(frame).ok()?;
-    let object = value.as_object()?;
-    if object.get("jsonrpc").and_then(serde_json::Value::as_str) != Some("2.0")
-        || object.get("method").and_then(serde_json::Value::as_str) != Some("tools/call")
-    {
-        return None;
-    }
-    let id = serde_json::from_value::<RequestId>(object.get("id")?.clone()).ok()?;
-    let valid = object
-        .get("params")
-        .cloned()
-        .and_then(|params| {
-            serde_json::from_value::<rmcp::model::CallToolRequestParams>(params).ok()
-        })
-        .is_some();
-    (!valid).then_some(id)
-}
-
 fn complete_frame_protocol_error(
     frame: &[u8],
 ) -> Option<(RequestId, ProtocolFailureKind, &'static str)> {
@@ -318,6 +280,7 @@ fn extract_safe_request_id(prefix: &[u8]) -> Option<RequestId> {
     }
     position += 1;
     let mut valid_jsonrpc = false;
+    let mut request_id = None;
 
     loop {
         position = skip_json_whitespace(prefix, position);
@@ -330,17 +293,26 @@ fn extract_safe_request_id(prefix: &[u8]) -> Option<RequestId> {
         position = skip_json_whitespace(prefix, position + 1);
         let value_end = simple_json_value_end(prefix, position)?;
         let value = &prefix[position..value_end];
+        let delimiter_position = skip_json_whitespace(prefix, value_end);
+        let delimiter = prefix.get(delimiter_position);
+        if !matches!(delimiter, Some(b',' | b'}')) {
+            return None;
+        }
 
         if key == "jsonrpc" {
             valid_jsonrpc = serde_json::from_slice::<String>(value).ok().as_deref() == Some("2.0");
-        } else if key == "id" && valid_jsonrpc {
-            let id = serde_json::from_slice::<RequestId>(value).ok()?;
-            let delimiter = prefix.get(skip_json_whitespace(prefix, value_end));
-            return matches!(delimiter, Some(b',' | b'}')).then_some(id);
+            if valid_jsonrpc && request_id.is_some() {
+                return request_id;
+            }
+        } else if key == "id" {
+            request_id = serde_json::from_slice::<RequestId>(value).ok();
+            if valid_jsonrpc {
+                return request_id;
+            }
         }
 
-        position = skip_json_whitespace(prefix, value_end);
-        match prefix.get(position) {
+        position = delimiter_position;
+        match delimiter {
             Some(b',') => position += 1,
             _ => return None,
         }
@@ -451,8 +423,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oversized_frame_with_safe_id_gets_protocol_error_and_is_discarded() {
-        let prefix = br#"{"jsonrpc":"2.0","id":41,"method":"tools/call","params":{"name":"ask_1c_ai","arguments":{"question":""#;
+    async fn oversized_frame_with_id_before_jsonrpc_gets_protocol_error_and_is_discarded() {
+        let prefix = br#"{"id":41,"jsonrpc":"2.0","method":"tools/call","params":{"name":"ask_1c_ai","arguments":{"question":""#;
         let suffix = br#""}}}"#;
         let mut oversized = prefix.to_vec();
         oversized.resize(MAX_INBOUND_MESSAGE_BYTES + 1 - suffix.len(), b'x');

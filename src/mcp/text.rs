@@ -55,8 +55,8 @@ pub(crate) fn extract_tool_text(input: &DirectToolText<'_>) -> String {
         let followups = input
             .tool_followups
             .iter()
-            .filter(|text| !text.is_empty())
             .map(|text| text.trim())
+            .filter(|text| !text.is_empty())
             .collect::<Vec<_>>();
         if let Some(followup) = followups.last() {
             blocks.push((*followup).to_owned());
@@ -245,5 +245,17 @@ mod tests {
                 case["name"].as_str().unwrap()
             );
         }
+    }
+
+    #[test]
+    fn whitespace_only_followup_does_not_hide_final_text() {
+        let input = DirectToolText {
+            tool_results: &[],
+            full_text: "",
+            tool_followups: &["   ".to_owned()],
+            final_text: "итог",
+        };
+
+        assert_eq!(extract_tool_text(&input), "итог");
     }
 }

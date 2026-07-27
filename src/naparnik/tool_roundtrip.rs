@@ -201,13 +201,22 @@ mod tests {
 
     #[test]
     fn direct_mode_requires_structurally_equal_arguments() {
-        let Value::Object(expected_arguments) = json!({"query":"test"}) else {
+        let Value::Object(expected_arguments) = json!({
+            "query": "test",
+            "extended": false
+        }) else {
             unreachable!("object literal")
         };
-        let Value::Object(reordered_arguments) = json!({"query":"test"}) else {
+        let Value::Object(reordered_arguments) = json!({
+            "extended": false,
+            "query": "test"
+        }) else {
             unreachable!("object literal")
         };
-        let Value::Object(different_arguments) = json!({"query":"other"}) else {
+        let Value::Object(different_arguments) = json!({
+            "query": "other",
+            "extended": false
+        }) else {
             unreachable!("object literal")
         };
 

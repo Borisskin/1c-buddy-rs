@@ -47,11 +47,14 @@ pub(crate) async fn run_stdio(
         {
             return Ok(());
         }
-        Err(_error) => return Err(McpRuntimeError::Initialization),
+        Err(error) => {
+            tracing::error!(?error, "MCP initialization failed");
+            return Err(McpRuntimeError::Initialization);
+        }
     };
-    running
-        .waiting()
-        .await
-        .map_err(|_error| McpRuntimeError::ServiceTask)?;
+    running.waiting().await.map_err(|error| {
+        tracing::error!(?error, "MCP service task failed");
+        McpRuntimeError::ServiceTask
+    })?;
     Ok(())
 }
