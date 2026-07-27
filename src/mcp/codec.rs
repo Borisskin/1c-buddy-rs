@@ -185,6 +185,25 @@ where
                     if frame.is_empty() {
                         continue;
                     }
+                    if let Some(id) = malformed_tool_call_id(&frame) {
+                        let response = ServerJsonRpcMessage::error(
+                            ProtocolFailure::new(
+                                ProtocolFailureKind::InvalidParams,
+                                "tools/call parameters are invalid",
+                            )
+                            .into_mcp_error(),
+                            Some(id),
+                        );
+                        if let Err(send_error) = self.writer.lock().await.send(response).await {
+                            tracing::warn!(
+                                %send_error,
+                                "failed to report invalid tools/call parameters"
+                            );
+                            self.shutdown.cancel();
+                            return None;
+                        }
+                        continue;
+                    }
                     let mut framed = BytesMut::from(frame.as_slice());
                     framed.put_u8(b'\n');
                     match self.decoder.decode(&mut framed) {
@@ -250,6 +269,25 @@ where
     async fn close(&mut self) -> Result<(), Self::Error> {
         self.writer.lock().await.close().await
     }
+}
+
+fn malformed_tool_call_id(frame: &[u8]) -> Option<RequestId> {
+    let value = serde_json::from_slice::<serde_json::Value>(frame).ok()?;
+    let object = value.as_object()?;
+    if object.get("jsonrpc").and_then(serde_json::Value::as_str) != Some("2.0")
+        || object.get("method").and_then(serde_json::Value::as_str) != Some("tools/call")
+    {
+        return None;
+    }
+    let id = serde_json::from_value::<RequestId>(object.get("id")?.clone()).ok()?;
+    let valid = object
+        .get("params")
+        .cloned()
+        .and_then(|params| {
+            serde_json::from_value::<rmcp::model::CallToolRequestParams>(params).ok()
+        })
+        .is_some();
+    (!valid).then_some(id)
 }
 
 fn complete_frame_protocol_error(
@@ -362,6 +400,8 @@ fn simple_json_value_end(input: &[u8], start: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::{BoundedJsonRpcMessageCodec, MAX_INBOUND_MESSAGE_BYTES, bounded_stdio_transport};
     use rmcp::{
         RoleServer,
@@ -478,16 +518,25 @@ mod tests {
         let mut output_reader = tokio::io::BufReader::new(output_reader);
         let mut transport = bounded_stdio_transport(input_reader, output_writer);
 
-        let next = Transport::<RoleServer>::receive(&mut transport).await;
+        let next = tokio::time::timeout(
+            Duration::from_secs(5),
+            Transport::<RoleServer>::receive(&mut transport),
+        )
+        .await
+        .expect("the malformed request must be handled without blocking");
         assert!(
             next.is_some(),
             "the frame after a malformed request with a safe id must be processed"
         );
 
         let mut error_line = String::new();
-        tokio::io::AsyncBufReadExt::read_line(&mut output_reader, &mut error_line)
-            .await
-            .expect("read invalid params error");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::io::AsyncBufReadExt::read_line(&mut output_reader, &mut error_line),
+        )
+        .await
+        .expect("the invalid-params response must not block")
+        .expect("read invalid params error");
         let error: serde_json::Value =
             serde_json::from_str(&error_line).expect("protocol error JSON");
         assert_eq!(error["id"], 51);
