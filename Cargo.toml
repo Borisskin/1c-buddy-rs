@@ -11,6 +11,7 @@ build = "build.rs"
 [package.metadata.winresource]
 FileDescription = "onec-buddy MCP server"
 ProductName = "onec-buddy"
+Comments = "AGPL-3.0-only"
 OriginalFilename = "onec-buddy-mcp.exe"
 InternalName = "onec-buddy-mcp"
 
