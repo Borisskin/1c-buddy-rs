@@ -1,0 +1,245 @@
+[
+  {
+    "name": "ask_1c_ai",
+    "description": "Задать общий вопрос по платформе 1С:Предприятие и получить ответ, объяснение или практическую рекомендацию. Используй для общих вопросов по функциональности платформы, подходам к разработке и типовым сценариям, когда не нужен отдельный специализированный поиск по документации или ИТС.",
+    "inputSchema": {
+      "properties": {
+        "configuration": {
+          "default": "",
+          "description": "Конфигурация 1С (например: Бухгалтерия предприятия, ERP, Управление торговлей).",
+          "type": "string"
+        },
+        "programming_language": {
+          "default": "",
+          "description": "Язык, если вопрос связан с кодом или синтаксисом.",
+          "enum": [
+            "",
+            "BSL",
+            "SQL",
+            "JSON",
+            "HTTP"
+          ],
+          "maxLength": 100000,
+          "type": "string"
+        },
+        "question": {
+          "description": "Вопрос или задача на русском языке. Старайся формулировать конкретно.",
+          "maxLength": 100000,
+          "minLength": 4,
+          "type": "string"
+        },
+        "ssl_version": {
+          "default": "",
+          "description": "Версия Библиотеки Стандартных Подсистем (БСП).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "title": "Ask 1C expert",
+      "type": "object"
+    }
+  },
+  {
+    "name": "explain_1c_syntax",
+    "description": "Объяснить конкретный элемент синтаксиса, объект или тип платформы 1С с примерами использования. Используй, когда нужно понять, как работает конкретный метод, объект, коллекция или конструкция языка.",
+    "inputSchema": {
+      "properties": {
+        "configuration": {
+          "default": "",
+          "description": "Конфигурация 1С (например: Бухгалтерия предприятия, ERP, Управление торговлей).",
+          "type": "string"
+        },
+        "context": {
+          "default": "",
+          "description": "Дополнительный контекст использования, если он важен для ответа.",
+          "maxLength": 100000,
+          "minLength": 0,
+          "type": "string"
+        },
+        "ssl_version": {
+          "default": "",
+          "description": "Версия Библиотеки Стандартных Подсистем (БСП).",
+          "type": "string"
+        },
+        "syntax_element": {
+          "description": "Название элемента, который нужно объяснить, например HTTPЗапрос, ТаблицаЗначений или Запрос.",
+          "maxLength": 100000,
+          "minLength": 4,
+          "type": "string"
+        }
+      },
+      "required": [
+        "syntax_element"
+      ],
+      "title": "Explain 1C syntax",
+      "type": "object"
+    }
+  },
+  {
+    "name": "check_1c_code",
+    "description": "Проверить присланный BSL/1C код. Используй check_type='syntax' для быстрой синтаксической проверки конкретного фрагмента и check_type='review' для code review, поиска ошибок и замечаний по качеству кода. Проверка syntax выполняется без глобального контекста, поэтому возможны ложные срабатывания по необъявленным переменным и методам.",
+    "inputSchema": {
+      "properties": {
+        "check_type": {
+          "default": "syntax",
+          "description": "syntax — синтаксическая проверка; review — code review. Значения logic/performance сохранены для обратной совместимости и обрабатываются как review.",
+          "enum": [
+            "syntax",
+            "review",
+            "logic",
+            "performance"
+          ],
+          "type": "string"
+        },
+        "code": {
+          "description": "Проверяемый фрагмент кода 1С.",
+          "maxLength": 100000,
+          "minLength": 4,
+          "type": "string"
+        },
+        "extended": {
+          "default": false,
+          "description": "Только для syntax: включить обогащение стандартами 1С.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "Check 1C code",
+      "type": "object"
+    }
+  },
+  {
+    "name": "modify_1c_code",
+    "description": "Изменить код 1С по явному заданию пользователя: исправить ошибку, сделать рефакторинг или добавить функциональность. В instruction опиши, какие изменения нужны и что ожидается на выходе. Если есть исходный код, передай его в параметре code.",
+    "inputSchema": {
+      "properties": {
+        "code": {
+          "default": "",
+          "description": "Исходный код 1С, который нужно изменить.",
+          "maxLength": 100000,
+          "minLength": 0,
+          "type": "string"
+        },
+        "instruction": {
+          "description": "Четкое описание задачи на русском языке: что нужно изменить и какой результат ожидается.",
+          "maxLength": 100000,
+          "minLength": 4,
+          "type": "string"
+        }
+      },
+      "required": [
+        "instruction"
+      ],
+      "title": "Modify 1C code",
+      "type": "object"
+    }
+  },
+  {
+    "name": "search_1c_documentation",
+    "description": "Поиск по документации платформы 1С:Предприятие. Используй, когда вопрос касается функциональности самой платформы: объектов, методов, свойств, синтаксиса и параметров, а также перед написанием кода, если нужна точная документация по элементу платформы. Не выдумывай синтаксис и поведение, если их можно сначала найти в документации. Для общих запросов формируй query так, чтобы он искал обзорную информацию: 'Общая информация о ...', 'Список всех ...', 'Все ...'. Если пользователь указал версию платформы, обязательно передай её.",
+    "inputSchema": {
+      "properties": {
+        "query": {
+          "description": "Поисковый запрос для embedding-поиска. Для общих тем лучше писать 'Общая информация о ...' или 'Список всех ...'.",
+          "maxLength": 100000,
+          "minLength": 4,
+          "type": "string"
+        },
+        "version": {
+          "default": "v8.5.1",
+          "description": "Версия документации платформы в формате v8.x.x или v8.x.x.x.",
+          "maxLength": 100000,
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "Search 1C documentation",
+      "type": "object"
+    }
+  },
+  {
+    "name": "search_its",
+    "description": "Поиск по базе знаний ИТС. Используй для стандартов и правил разработки на 1С, методических материалов, практических примеров, вопросов по конкретным конфигурациям и продуктам 1С, а также по EDT и Конфигуратору. Для фактологических вопросов по экосистеме 1С предпочитай именно этот инструмент, а не ответ по памяти. Если найденной информации недостаточно, переформулируй query или затем используй fetch_its для чтения конкретного документа.",
+    "inputSchema": {
+      "properties": {
+        "configuration": {
+          "default": "",
+          "description": "Конфигурация 1С (например: Бухгалтерия предприятия, ERP, Управление торговлей).",
+          "type": "string"
+        },
+        "query": {
+          "description": "Поисковый запрос для embedding-поиска по ИТС.",
+          "maxLength": 100000,
+          "minLength": 4,
+          "type": "string"
+        },
+        "ssl_version": {
+          "default": "",
+          "description": "Версия Библиотеки Стандартных Подсистем (БСП).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "Search ITS",
+      "type": "object"
+    }
+  },
+  {
+    "name": "fetch_its",
+    "description": "Получить содержимое документа, каталога или базы ИТС по id. Обычно используется после search_its, когда уже найден нужный документ, либо для исследования структуры ИТС с id='root'. Поддерживаются как специальные id вроде root, superior, v8std, так и идентификаторы документов и каталогов вида its-...-hdoc или its-...-hdir, возможно с 1-2 якорями через '/'. Обычно id документа выглядит как 'its-{database_id}-{doc_or_dir_id}-(hdoc|hdir|...)'.",
+    "inputSchema": {
+      "properties": {
+        "id": {
+          "default": "root",
+          "description": "Идентификатор документа, каталога или базы ИТС: root, superior, v8std или строка вида its-...-hdoc/hdir.",
+          "maxLength": 100000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [],
+      "title": "Fetch ITS",
+      "type": "object"
+    }
+  },
+  {
+    "name": "diff_1c_documentation_versions",
+    "description": "Сравнить документацию платформы 1С между двумя версиями. Используй, когда спрашивают об изменениях между версиями платформы. version_a должна быть более ранней, version_b — более поздней. Параметр query задаёт предметную область сравнения. Если разница пустая, но вернулся список изменённых файлов, значит query нужно переформулировать.",
+    "inputSchema": {
+      "properties": {
+        "query": {
+          "default": "",
+          "description": "Необязательная предметная область сравнения, например 'HTTP соединение'.",
+          "maxLength": 100000,
+          "type": "string"
+        },
+        "version_a": {
+          "description": "Более ранняя версия в формате v8.3.27 или v8.3.27.189.",
+          "maxLength": 100000,
+          "minLength": 2,
+          "type": "string"
+        },
+        "version_b": {
+          "description": "Более поздняя версия в формате v8.3.27 или v8.3.27.189.",
+          "maxLength": 100000,
+          "minLength": 2,
+          "type": "string"
+        }
+      },
+      "required": [
+        "version_a",
+        "version_b"
+      ],
+      "title": "Diff 1C documentation versions",
+      "type": "object"
+    }
+  }
+]

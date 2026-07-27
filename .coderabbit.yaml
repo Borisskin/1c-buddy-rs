@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: ru-RU
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  review_details: true
+  review_progress: true
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: true
+  path_instructions:
+    - path: "src/**/*.rs"
+      instructions: |
+        Проверяй совместимость публичных схем MCP и поведения с исходным 1c-buddy.
+        Особое внимание уделяй ограничениям размера, тайм-аутам, отмене операций,
+        конкурентному выполнению и утечкам токена или содержимого ответов в ошибки.
+        Для изменений поведения требуй достаточные модульные испытания.
+    - path: ".github/workflows/*.yml"
+      instructions: |
+        Запрос на слияние не должен собирать архив или публиковать выпуск.
+        Выпуск разрешён только после успешных проверок при отправке в main.
+        Исполняемый файл выпуска должен собираться один раз, проверяться по SHA-256
+        и без повторной сборки передаваться в публикацию. Внешние действия должны
+        быть закреплены полными хешами, а разрешения — оставаться минимальными.
+    - path: "{README.md,README_FULL.md,.env.example,examples/**}"
+      instructions: |
+        Проверяй согласованность примеров с фактической программой и схемами MCP.
+        Токен должен передаваться только через ONEC_AI_TOKEN из окружения пользователя
+        или системы; буквальное значение токена нельзя помещать в примеры.
+
+chat:
+  auto_reply: true

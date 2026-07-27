@@ -1,0 +1,4 @@
+interface:
+  display_name: "1C Buddy"
+  short_description: "Use 1C, BSL, platform docs, and ITS"
+  default_prompt: "Use $use-onec-buddy to check this 1C code and explain the findings."
