@@ -94,9 +94,8 @@ pub(crate) fn extract_standard_text(
     }
     tool_followups
         .iter()
-        .filter(|text| !text.is_empty())
         .map(|text| text.trim())
-        .next_back()
+        .rfind(|text| !text.is_empty())
         .unwrap_or_default()
         .to_owned()
 }
@@ -191,7 +190,9 @@ fn python_repr_string(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DirectToolText, ToolTextResult, extract_tool_text, sanitize_text};
+    use super::{
+        DirectToolText, ToolTextResult, extract_standard_text, extract_tool_text, sanitize_text,
+    };
     use serde_json::Value;
 
     fn fixture() -> Value {
@@ -257,5 +258,15 @@ mod tests {
         };
 
         assert_eq!(extract_tool_text(&input), "итог");
+    }
+
+    #[test]
+    fn standard_text_uses_the_last_nonempty_trimmed_followup() {
+        let followups = vec!["содержательный ответ".to_owned(), "   ".to_owned()];
+
+        assert_eq!(
+            extract_standard_text("", "", &followups),
+            "содержательный ответ"
+        );
     }
 }

@@ -411,12 +411,14 @@ impl NaparnikClient {
             .map(Some)
             .chain(std::iter::once(None));
         for (attempt, connect_retry_delay) in attempts.enumerate() {
-            let request = self
+            let mut request = self
                 .client
                 .request(Method::POST, url.clone())
-                .headers(headers.clone())
-                .timeout(HTTP_OPERATION_TIMEOUT)
-                .body(body.clone());
+                .headers(headers.clone());
+            if let Some(timeout) = operation.request_timeout() {
+                request = request.timeout(timeout);
+            }
+            let request = request.body(body.clone());
             let result = await_in_context(context, request.send()).await?;
 
             match result {
@@ -496,6 +498,13 @@ enum Operation {
 }
 
 impl Operation {
+    const fn request_timeout(self) -> Option<Duration> {
+        match self {
+            Self::CreateConversation => Some(HTTP_OPERATION_TIMEOUT),
+            Self::Message => None,
+        }
+    }
+
     fn can_retry_status(self, status: StatusCode) -> bool {
         status == StatusCode::LOCKED
             || status == StatusCode::TOO_MANY_REQUESTS
@@ -679,8 +688,8 @@ mod tests {
     use super::{CallContext, NaparnikClient, Operation, retry_delay, serialize_bounded};
     use crate::error::{ClientCallError, ToolFailure, ToolFailureKind};
     use crate::limits::{
-        CONVERSATION_RESPONSE_MAX_BYTES, ERROR_BODY_MAX_BYTES, TOOL_CALL_TIMEOUT,
-        UPSTREAM_REQUEST_MAX_BYTES,
+        CONVERSATION_RESPONSE_MAX_BYTES, ERROR_BODY_MAX_BYTES, HTTP_OPERATION_TIMEOUT,
+        TOOL_CALL_TIMEOUT, UPSTREAM_REQUEST_MAX_BYTES,
     };
     use crate::naparnik::types::Conversation;
 
@@ -692,6 +701,15 @@ mod tests {
         let client = NaparnikClient::for_test(base_url).expect("test client must build");
 
         assert!(client.authorization.is_sensitive());
+    }
+
+    #[test]
+    fn message_stream_uses_the_call_context_instead_of_a_request_timeout() {
+        assert_eq!(
+            Operation::CreateConversation.request_timeout(),
+            Some(HTTP_OPERATION_TIMEOUT)
+        );
+        assert_eq!(Operation::Message.request_timeout(), None);
     }
 
     #[derive(Debug)]

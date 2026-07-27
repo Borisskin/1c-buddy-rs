@@ -1,1 +1,5 @@
+/.env
+/release-evidence/
+/release-output/
+/release-stage/
 /target/

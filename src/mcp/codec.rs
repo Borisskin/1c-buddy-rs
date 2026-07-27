@@ -329,7 +329,7 @@ fn extract_safe_request_id(prefix: &[u8]) -> Option<RequestId> {
             return None;
         }
         position = skip_json_whitespace(prefix, position + 1);
-        let value_end = simple_json_value_end(prefix, position)?;
+        let value_end = json_value_end(prefix, position)?;
         let value = &prefix[position..value_end];
         let delimiter_position = skip_json_whitespace(prefix, value_end);
         let delimiter = prefix.get(delimiter_position);
@@ -384,25 +384,21 @@ fn json_string_end(input: &[u8], start: usize) -> Option<usize> {
     None
 }
 
-fn simple_json_value_end(input: &[u8], start: usize) -> Option<usize> {
-    if input.get(start) == Some(&b'"') {
-        return json_string_end(input, start);
-    }
-    if matches!(input.get(start), Some(b'{' | b'[') | None) {
-        return None;
-    }
-    let length = input[start..]
-        .iter()
-        .position(|byte| matches!(byte, b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n'))
-        .unwrap_or(input.len() - start);
-    (length > 0).then_some(start + length)
+fn json_value_end(input: &[u8], start: usize) -> Option<usize> {
+    let mut values = serde_json::Deserializer::from_slice(input.get(start..)?)
+        .into_iter::<serde::de::IgnoredAny>();
+    values.next()?.ok()?;
+    Some(start + values.byte_offset())
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use super::{BoundedJsonRpcMessageCodec, MAX_INBOUND_MESSAGE_BYTES, bounded_stdio_transport};
+    use super::{
+        BoundedJsonRpcMessageCodec, MAX_INBOUND_MESSAGE_BYTES, bounded_stdio_transport,
+        extract_safe_request_id,
+    };
     use rmcp::{
         RoleServer,
         model::{CallToolResult, ContentBlock, RequestId, ServerJsonRpcMessage, ServerResult},
@@ -416,6 +412,22 @@ mod tests {
         let transport = bounded_stdio_transport(tokio::io::empty(), sink());
 
         assert_eq!(transport.max_inbound_message_bytes(), 2 * 1024 * 1024);
+    }
+
+    #[test]
+    fn oversized_id_scanner_skips_complete_composite_members() {
+        let object_first = br#"{"params":{"name":"ask","arguments":{"question":"x"}},"id":61,"jsonrpc":"2.0","method":"tools/call""#;
+        let array_first =
+            br#"{"metadata":[1,{"text":"x"}],"id":62,"jsonrpc":"2.0","method":"ping""#;
+
+        assert_eq!(
+            extract_safe_request_id(object_first),
+            Some(RequestId::Number(61))
+        );
+        assert_eq!(
+            extract_safe_request_id(array_first),
+            Some(RequestId::Number(62))
+        );
     }
 
     #[tokio::test]
