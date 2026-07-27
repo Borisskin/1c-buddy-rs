@@ -176,7 +176,10 @@ fn suffix_prefix_overlap(accumulated: &str, next: &str) -> usize {
         if pattern[index] == pattern[matched] {
             matched += 1;
         }
-        prefix[index] = matched as u32;
+        let Ok(encoded_match) = u32::try_from(matched) else {
+            return 0;
+        };
+        prefix[index] = encoded_match;
     }
 
     let mut start = accumulated.len() - max_overlap;
