@@ -1,0 +1,254 @@
+{
+  "reference": "vendor/1c-buddy-main Python Buddy 1.4.0",
+  "catalog": {
+    "min_length": 4,
+    "max_length": 100,
+    "programming_language": "BSL",
+    "default_ssl_version": "",
+    "default_configuration": ""
+  },
+  "input_cases": [
+    {
+      "name": "required and optional strings are stripped; unknown fields are ignored",
+      "tool": "ask_1c_ai",
+      "arguments": {
+        "question": "  🦀🦀🦀🦀 \r\n",
+        "programming_language": " SQL ",
+        "unknown": true
+      },
+      "normalized": {
+        "question": "🦀🦀🦀🦀",
+        "programming_language": "SQL",
+        "ssl_version": "",
+        "configuration": ""
+      }
+    },
+    {
+      "name": "missing required field uses the pinned public message",
+      "tool": "ask_1c_ai",
+      "arguments": {},
+      "error": "Ошибка: Вопрос не может быть пустым"
+    },
+    {
+      "name": "null required field uses the empty message",
+      "tool": "check_1c_code",
+      "arguments": {
+        "code": null
+      },
+      "error": "Ошибка: Код для проверки не может быть пустым"
+    },
+    {
+      "name": "null optional string is a type error",
+      "tool": "ask_1c_ai",
+      "arguments": {
+        "question": "тест",
+        "programming_language": null
+      },
+      "error": "Ошибка: programming_language должно быть строкой"
+    },
+    {
+      "name": "blank optional strings use schema defaults",
+      "tool": "search_1c_documentation",
+      "arguments": {
+        "query": "  запрос  ",
+        "version": " \t "
+      },
+      "normalized": {
+        "query": "запрос",
+        "version": "v8.5.1"
+      }
+    },
+    {
+      "name": "blank optional id uses root",
+      "tool": "fetch_its",
+      "arguments": {
+        "id": " \r\n "
+      },
+      "normalized": {
+        "id": "root"
+      }
+    },
+    {
+      "name": "compatibility enum is preserved after stripping",
+      "tool": "check_1c_code",
+      "arguments": {
+        "code": "  Процедура Тест() КонецПроцедуры  ",
+        "check_type": " logic ",
+        "extended": false,
+        "unknown": "ignored"
+      },
+      "normalized": {
+        "code": "Процедура Тест() КонецПроцедуры",
+        "check_type": "logic",
+        "extended": false
+      }
+    },
+    {
+      "name": "null optional boolean is a type error",
+      "tool": "check_1c_code",
+      "arguments": {
+        "code": "тест",
+        "extended": null
+      },
+      "error": "Ошибка: extended должно быть логическим значением (true или false)"
+    },
+    {
+      "name": "invalid enum reports every allowed value",
+      "tool": "ask_1c_ai",
+      "arguments": {
+        "question": "тест",
+        "programming_language": "Rust"
+      },
+      "error": "Ошибка: programming_language должно быть одним из: '', 'BSL', 'SQL', 'JSON', 'HTTP'"
+    },
+    {
+      "name": "minimum length is checked after stripping",
+      "tool": "diff_1c_documentation_versions",
+      "arguments": {
+        "version_a": " v ",
+        "version_b": " v2 "
+      },
+      "error": "Ошибка: version_a короче минимальной длины 2"
+    },
+    {
+      "name": "diff strings are stripped before routing",
+      "tool": "diff_1c_documentation_versions",
+      "arguments": {
+        "version_a": " v8.3.26 ",
+        "version_b": " v8.3.27 ",
+        "query": " HTTP "
+      },
+      "normalized": {
+        "version_a": "v8.3.26",
+        "version_b": "v8.3.27",
+        "query": "HTTP"
+      }
+    }
+  ],
+  "sanitization_cases": [
+    {
+      "name": "empty text remains empty",
+      "input": "",
+      "expected": ""
+    },
+    {
+      "name": "compatibility characters use NFKC",
+      "input": "ＡＢＣ ﬁ ①",
+      "expected": "ABC fi 1"
+    },
+    {
+      "name": "Cc and Cf are removed except newline carriage return and tab",
+      "input": "a\u0000b\u200bc\n\r\td\u0085e",
+      "expected": "abc\n\r\tde"
+    },
+    {
+      "name": "1C markdown fence is not renamed",
+      "input": "```1C\nСообщить(\"тест\");\n```",
+      "expected": "```1C\nСообщить(\"тест\");\n```"
+    }
+  ],
+  "extraction_cases": [
+    {
+      "name": "tool details precede full text and use Python str",
+      "result": {
+        "tool_results": [
+          {
+            "response_markdown": "  Проверка  ",
+            "response_details": [
+              "строка",
+              42,
+              true,
+              false,
+              null,
+              0,
+              "",
+              [
+                "x",
+                1,
+                true,
+                null
+              ],
+              {
+                "a": "x",
+                "b": false
+              },
+              [],
+              {}
+            ]
+          }
+        ],
+        "full_text": "  Итог  ",
+        "tool_followups": [
+          "первый",
+          "последний"
+        ],
+        "final_text": "запасной"
+      },
+      "expected": "Проверка\nстрока\n42\nTrue\n['x', 1, True, None]\n{'a': 'x', 'b': False}\nИтог"
+    },
+    {
+      "name": "completion marker is skipped and last followup wins",
+      "result": {
+        "tool_results": [
+          {
+            "response_markdown": " ✓ Инструмент выполнен ",
+            "response_details": []
+          }
+        ],
+        "full_text": "",
+        "tool_followups": [
+          " первый ",
+          " последний "
+        ],
+        "final_text": "запасной"
+      },
+      "expected": "последний"
+    },
+    {
+      "name": "final text is the last fallback",
+      "result": {
+        "tool_results": [],
+        "full_text": "",
+        "tool_followups": [],
+        "final_text": " итог "
+      },
+      "expected": "итог"
+    },
+    {
+      "name": "useful tool result succeeds without assistant text",
+      "result": {
+        "tool_results": [
+          {
+            "response_markdown": "Ошибок не обнаружено",
+            "response_details": []
+          }
+        ],
+        "full_text": "",
+        "tool_followups": [],
+        "final_text": ""
+      },
+      "expected": "Ошибок не обнаружено"
+    },
+    {
+      "name": "multiple tool results retain their order",
+      "result": {
+        "tool_results": [
+          {
+            "response_markdown": "первый",
+            "response_details": [
+              "подробность"
+            ]
+          },
+          {
+            "response_markdown": "второй",
+            "response_details": []
+          }
+        ],
+        "full_text": "",
+        "tool_followups": [],
+        "final_text": ""
+      },
+      "expected": "первый\nподробность\nвторой"
+    }
+  ]
+}
