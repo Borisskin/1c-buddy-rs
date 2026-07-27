@@ -1,0 +1,522 @@
+name: Windows
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUSTFLAGS: "-C target-feature=+crt-static"
+
+jobs:
+  release-version:
+    name: Check release version
+    runs-on: windows-2025
+    timeout-minutes: 5
+
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      tag: ${{ steps.identity.outputs.tag }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Require an unused package version
+        id: identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $manifest = Get-Content -LiteralPath (Join-Path $PWD "Cargo.toml") -Raw
+          $packageBlock = [regex]::Match(
+            $manifest,
+            '(?ms)^\[package\]\s*(?<body>.*?)(?=^\[|\z)'
+          )
+          if (-not $packageBlock.Success) {
+            throw "[package] was not found in Cargo.toml"
+          }
+
+          $versionMatch = [regex]::Match(
+            $packageBlock.Groups["body"].Value,
+            '(?m)^\s*version\s*=\s*"(?<version>[^"]+)"\s*$'
+          )
+          if (-not $versionMatch.Success) {
+            throw "[package].version was not found in Cargo.toml"
+          }
+
+          $version = $versionMatch.Groups["version"].Value
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
+            throw "package version is not valid SemVer: $version"
+          }
+          $tag = "v$version"
+
+          $headers = @{
+            Accept = "application/vnd.github+json"
+            Authorization = "Bearer $env:GH_TOKEN"
+            "X-GitHub-Api-Version" = "2026-03-10"
+          }
+          function Test-GitHubResource {
+            param([Parameter(Mandatory)][string] $Uri)
+
+            $response = Invoke-WebRequest -Uri $Uri -Headers $headers -SkipHttpErrorCheck
+            switch ([int]$response.StatusCode) {
+              200 { return $true }
+              404 { return $false }
+              default {
+                throw "GitHub API returned HTTP $($response.StatusCode) for $Uri"
+              }
+            }
+          }
+
+          $escapedTag = [System.Uri]::EscapeDataString($tag)
+          $repositoryApi = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY"
+          $tagExists = Test-GitHubResource "$repositoryApi/git/ref/tags/$escapedTag"
+          $releaseExists = Test-GitHubResource "$repositoryApi/releases/tags/$escapedTag"
+          if ($tagExists -or $releaseExists) {
+            Write-Host "::error title=Release version already exists::$tag is already used. Bump [package].version in Cargo.toml and refresh Cargo.lock."
+            throw "release tag or release already exists: $tag"
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          Write-Host "Release identity: version=$version, tag=$tag"
+
+  build-and-check:
+    name: Verify Windows MSVC target
+    needs: release-version
+    runs-on: windows-2025
+    timeout-minutes: 45
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      RUST_TOOLCHAIN: "1.97.1"
+      RUST_TARGET: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy --target x86_64-pc-windows-msvc
+          rustup default $env:RUST_TOOLCHAIN
+          rustc -Vv
+          cargo -V
+
+      - name: Verify locked dependency graph
+        shell: pwsh
+        run: cargo metadata --locked --format-version 1 | Out-Null
+
+      - name: Check formatting
+        shell: pwsh
+        run: cargo fmt --all -- --check
+
+      - name: Check code
+        shell: pwsh
+        run: cargo clippy --locked --target x86_64-pc-windows-msvc --all-features -- -D warnings
+
+      - name: Build debug executable
+        shell: pwsh
+        run: cargo build --locked --target x86_64-pc-windows-msvc --all-features
+
+      - name: Check command-line metadata
+        shell: pwsh
+        run: |
+          $binary = Join-Path $PWD "target\$env:RUST_TARGET\debug\onec-buddy-mcp.exe"
+
+          & $binary --help
+          if ($LASTEXITCODE -ne 0) {
+            throw "--help failed with exit code $LASTEXITCODE"
+          }
+
+          & $binary --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "--version failed with exit code $LASTEXITCODE"
+          }
+
+  release-candidate:
+    name: Build frozen Windows candidate
+    needs:
+      - release-version
+      - build-and-check
+    if: github.event_name == 'push' && github.ref_name == 'main'
+    runs-on: windows-2025
+    timeout-minutes: 45
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      RUST_TOOLCHAIN: "1.97.1"
+      RUST_TARGET: x86_64-pc-windows-msvc
+      ARCHIVE_NAME: onec-buddy-mcp-windows-x86_64.zip
+      PACKAGE_VERSION: ${{ needs.release-version.outputs.version }}
+      RELEASE_TAG: ${{ needs.release-version.outputs.tag }}
+
+    steps:
+      - name: Check out the verified source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --target x86_64-pc-windows-msvc
+          rustup default $env:RUST_TOOLCHAIN
+
+      - name: Record build environment
+        id: environment
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $PWD "release-evidence"
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          $environmentFile = Join-Path $evidence "BUILD_ENVIRONMENT.txt"
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+            throw "vswhere.exe was not found"
+          }
+          $visualStudioPath = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          $visualStudioVersion = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationVersion
+          if (-not $visualStudioPath -or -not $visualStudioVersion) {
+            throw "MSVC installation was not found"
+          }
+          $toolset = Get-ChildItem -LiteralPath (Join-Path $visualStudioPath "VC\Tools\MSVC") `
+            -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $toolset) {
+            throw "MSVC toolset was not found"
+          }
+          @(
+            "source_sha=$env:GITHUB_SHA"
+            "package_version=$env:PACKAGE_VERSION"
+            "release_tag=$env:RELEASE_TAG"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+            "image_os=$env:ImageOS"
+            "ImageVersion=$env:ImageVersion"
+            "windows_caption=$((Get-CimInstance Win32_OperatingSystem).Caption)"
+            "windows_version=$((Get-CimInstance Win32_OperatingSystem).Version)"
+            "MSVC_installation=$visualStudioVersion"
+            "MSVC_toolset=$($toolset.Name)"
+          ) | Set-Content -LiteralPath $environmentFile -Encoding utf8
+          rustc -Vv | Tee-Object -FilePath $environmentFile -Append
+          cargo -V | Tee-Object -FilePath $environmentFile -Append
+          "visual_studio_path=$visualStudioPath" >> $env:GITHUB_OUTPUT
+          "msvc_toolset_path=$($toolset.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Build release executable once
+        shell: pwsh
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Inspect PE architecture and static MSVC runtime
+        shell: pwsh
+        env:
+          VISUAL_STUDIO_PATH: ${{ steps.environment.outputs.visual_studio_path }}
+          MSVC_TOOLSET_PATH: ${{ steps.environment.outputs.msvc_toolset_path }}
+        run: |
+          $binary = Join-Path $PWD "target\$env:RUST_TARGET\release\onec-buddy-mcp.exe"
+          if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+            throw "release executable was not produced"
+          }
+          $bytes = [System.IO.File]::ReadAllBytes($binary)
+          if ($bytes.Length -lt 64 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+            throw "candidate is not a PE file"
+          }
+          $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3c)
+          if ($peOffset -lt 0 -or $peOffset + 6 -gt $bytes.Length) {
+            throw "candidate has an invalid PE header offset"
+          }
+          if (
+            $bytes[$peOffset] -ne 0x50 -or
+            $bytes[$peOffset + 1] -ne 0x45 -or
+            $bytes[$peOffset + 2] -ne 0x00 -or
+            $bytes[$peOffset + 3] -ne 0x00
+          ) {
+            throw "candidate has an invalid PE signature"
+          }
+          $machine = [System.BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0x8664) {
+            throw "candidate PE machine is not x86-64: 0x$($machine.ToString('x4'))"
+          }
+
+          $dumpbin = Join-Path $env:MSVC_TOOLSET_PATH "bin\Hostx64\x64\dumpbin.exe"
+          if (-not (Test-Path -LiteralPath $dumpbin -PathType Leaf)) {
+            throw "dumpbin.exe was not found"
+          }
+          $dependencies = & $dumpbin /dependents $binary 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            throw "dumpbin /dependents failed with exit code $LASTEXITCODE"
+          }
+          $dependencyText = $dependencies -join "`n"
+          $dependencyText | Set-Content -LiteralPath `
+            (Join-Path $PWD "release-evidence\PE_DEPENDENCIES.txt") -Encoding utf8
+          if ($dependencyText -match "(?i)(VCRUNTIME|MSVCP|ucrtbase|api-ms-win-crt).*\.dll") {
+            throw "candidate dynamically imports an MSVC runtime DLL"
+          }
+
+          $stage = Join-Path $PWD "release-stage"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item -LiteralPath $binary -Destination (Join-Path $stage "onec-buddy-mcp.exe")
+          foreach ($file in @("README.md", "README_FULL.md", "LICENSE", ".env.example")) {
+            Copy-Item -LiteralPath (Join-Path $PWD $file) -Destination (Join-Path $stage $file)
+          }
+
+      - name: Freeze candidate SHA-256
+        id: freeze
+        shell: pwsh
+        run: |
+          $candidate = Join-Path $PWD "release-stage\onec-buddy-mcp.exe"
+          $hash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  onec-buddy-mcp.exe" | Set-Content -LiteralPath `
+            (Join-Path $PWD "release-evidence\EXE_SHA256.txt") -Encoding ascii
+          "exe_sha256=$hash" >> $env:GITHUB_OUTPUT
+
+      - name: Package and verify frozen candidate
+        id: package
+        shell: pwsh
+        env:
+          EXE_SHA256: ${{ steps.freeze.outputs.exe_sha256 }}
+        run: |
+          $stage = Join-Path $PWD "release-stage"
+          $output = Join-Path $PWD "release-output"
+          New-Item -ItemType Directory -Path $output | Out-Null
+          $archive = Join-Path $output $env:ARCHIVE_NAME
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $archive `
+            -CompressionLevel Optimal
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+          try {
+            $expected = @(
+              ".env.example"
+              "README_FULL.md"
+              "LICENSE"
+              "README.md"
+              "onec-buddy-mcp.exe"
+            )
+            $actual = @($zip.Entries | ForEach-Object FullName | Sort-Object)
+            if ($actual.Count -ne 5) {
+              throw "Expected exactly five archive entries, found $($actual.Count)"
+            }
+            if (Compare-Object -ReferenceObject $expected -DifferenceObject $actual) {
+              throw "archive entries do not match the required five files"
+            }
+            $entry = $zip.GetEntry("onec-buddy-mcp.exe")
+            if (-not $entry) {
+              throw "archive does not contain onec-buddy-mcp.exe"
+            }
+            $sha256 = [System.Security.Cryptography.SHA256]::Create()
+            $stream = $entry.Open()
+            try {
+              $embeddedHash = [System.BitConverter]::ToString(
+                $sha256.ComputeHash($stream)
+              ).Replace("-", "").ToLowerInvariant()
+            }
+            finally {
+              $stream.Dispose()
+              $sha256.Dispose()
+            }
+            if ($embeddedHash -ne $env:EXE_SHA256) {
+              throw "embedded executable SHA-256 differs from the frozen candidate"
+            }
+          }
+          finally {
+            $zip.Dispose()
+          }
+
+          $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            "$env:EXE_SHA256  onec-buddy-mcp.exe"
+            "$archiveHash  $env:ARCHIVE_NAME"
+          ) | Set-Content -LiteralPath (Join-Path $output "SHA256SUMS.txt") -Encoding ascii
+
+          [ordered]@{
+            schema_version = 1
+            package_name = "onec-buddy-mcp"
+            package_version = $env:PACKAGE_VERSION
+            release_tag = $env:RELEASE_TAG
+            source_sha = $env:GITHUB_SHA
+            archive_name = $env:ARCHIVE_NAME
+            exe_sha256 = $env:EXE_SHA256
+            archive_sha256 = $archiveHash
+          } | ConvertTo-Json | Set-Content -LiteralPath `
+            (Join-Path $PWD "release-evidence\RELEASE_METADATA.json") -Encoding utf8NoBOM
+
+          "archive_sha256=$archiveHash" >> $env:GITHUB_OUTPUT
+
+      - name: Upload candidate and evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: onec-buddy-mcp-candidate-${{ github.sha }}
+          path: |
+            release-output/onec-buddy-mcp-windows-x86_64.zip
+            release-output/SHA256SUMS.txt
+            release-evidence/BUILD_ENVIRONMENT.txt
+            release-evidence/PE_DEPENDENCIES.txt
+            release-evidence/EXE_SHA256.txt
+            release-evidence/RELEASE_METADATA.json
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-release:
+    name: Publish GitHub release
+    needs:
+      - release-version
+      - release-candidate
+    if: github.event_name == 'push' && github.ref_name == 'main'
+    runs-on: windows-2025
+    timeout-minutes: 10
+
+    permissions:
+      actions: read
+      contents: write
+
+    env:
+      ARCHIVE_NAME: onec-buddy-mcp-windows-x86_64.zip
+      PACKAGE_VERSION: ${{ needs.release-version.outputs.version }}
+      RELEASE_TAG: ${{ needs.release-version.outputs.tag }}
+      SOURCE_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Download the verified candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: onec-buddy-mcp-candidate-${{ github.sha }}
+          path: publication
+
+      - name: Verify and publish the frozen candidate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $root = Join-Path $PWD "publication"
+          $archive = Join-Path $root "release-output\$env:ARCHIVE_NAME"
+          $checksums = Join-Path $root "release-output\SHA256SUMS.txt"
+          $metadataPath = Join-Path $root "release-evidence\RELEASE_METADATA.json"
+          $exeHashPath = Join-Path $root "release-evidence\EXE_SHA256.txt"
+
+          foreach ($requiredFile in @($archive, $checksums, $metadataPath, $exeHashPath)) {
+            if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
+              throw "verified artifact file is missing: $requiredFile"
+            }
+          }
+
+          $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+          $expectedMetadata = [ordered]@{
+            schema_version = "1"
+            package_name = "onec-buddy-mcp"
+            package_version = $env:PACKAGE_VERSION
+            release_tag = $env:RELEASE_TAG
+            source_sha = $env:SOURCE_SHA
+            archive_name = $env:ARCHIVE_NAME
+          }
+          foreach ($entry in $expectedMetadata.GetEnumerator()) {
+            $actual = "$($metadata.($entry.Key))"
+            if ($actual -cne $entry.Value) {
+              throw "release metadata mismatch for $($entry.Key): expected '$($entry.Value)', found '$actual'"
+            }
+          }
+
+          $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($archiveHash -cne "$($metadata.archive_sha256)") {
+            throw "downloaded archive SHA-256 differs from release metadata"
+          }
+
+          $checksumLines = @(Get-Content -LiteralPath $checksums)
+          $archiveChecksumLine = "$archiveHash  $env:ARCHIVE_NAME"
+          $exeChecksumLine = "$($metadata.exe_sha256)  onec-buddy-mcp.exe"
+          if ($checksumLines -cnotcontains $archiveChecksumLine) {
+            throw "SHA256SUMS.txt does not contain the verified archive hash"
+          }
+          if ($checksumLines -cnotcontains $exeChecksumLine) {
+            throw "SHA256SUMS.txt does not contain the verified executable hash"
+          }
+          if ((Get-Content -LiteralPath $exeHashPath -Raw).Trim() -cne $exeChecksumLine) {
+            throw "EXE_SHA256.txt does not match release metadata"
+          }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+          try {
+            $entry = $zip.GetEntry("onec-buddy-mcp.exe")
+            if (-not $entry) {
+              throw "archive does not contain onec-buddy-mcp.exe"
+            }
+            $sha256 = [System.Security.Cryptography.SHA256]::Create()
+            $stream = $entry.Open()
+            try {
+              $embeddedHash = [System.BitConverter]::ToString(
+                $sha256.ComputeHash($stream)
+              ).Replace("-", "").ToLowerInvariant()
+            }
+            finally {
+              $stream.Dispose()
+              $sha256.Dispose()
+            }
+          }
+          finally {
+            $zip.Dispose()
+          }
+          if ($embeddedHash -cne "$($metadata.exe_sha256)") {
+            throw "embedded executable SHA-256 differs from release metadata"
+          }
+
+          $headers = @{
+            Accept = "application/vnd.github+json"
+            Authorization = "Bearer $env:GH_TOKEN"
+            "X-GitHub-Api-Version" = "2026-03-10"
+          }
+          function Test-GitHubResource {
+            param([Parameter(Mandatory)][string] $Uri)
+
+            $response = Invoke-WebRequest -Uri $Uri -Headers $headers -SkipHttpErrorCheck
+            switch ([int]$response.StatusCode) {
+              200 { return $true }
+              404 { return $false }
+              default {
+                throw "GitHub API returned HTTP $($response.StatusCode) for $Uri"
+              }
+            }
+          }
+
+          $escapedTag = [System.Uri]::EscapeDataString($env:RELEASE_TAG)
+          $repositoryApi = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY"
+          $tagExists = Test-GitHubResource "$repositoryApi/git/ref/tags/$escapedTag"
+          $releaseExists = Test-GitHubResource "$repositoryApi/releases/tags/$escapedTag"
+          if ($tagExists -or $releaseExists) {
+            throw "release tag or release appeared after the preflight check: $env:RELEASE_TAG"
+          }
+
+          gh release create $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:SOURCE_SHA `
+            --title "onec-buddy-mcp $env:RELEASE_TAG" `
+            --generate-notes `
+            "$archive#Windows x86-64 package" `
+            "$checksums#SHA-256 checksums" `
+            "$metadataPath#Release metadata"
+          if ($LASTEXITCODE -ne 0) {
+            throw "gh release create failed with exit code $LASTEXITCODE"
+          }
+
+          $releaseUrl = gh release view $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY --json url --jq .url
+          if ($LASTEXITCODE -ne 0 -or -not $releaseUrl) {
+            throw "published release could not be verified"
+          }
+          "Published [$env:RELEASE_TAG]($releaseUrl) from verified artifact for $env:SOURCE_SHA." |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
