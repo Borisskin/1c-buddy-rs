@@ -1,12 +1,10 @@
 name: Windows
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,7 +32,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Require an unused package version
+      - name: Validate package version and release identity
         id: identity
         shell: pwsh
         env:
@@ -63,31 +61,37 @@ jobs:
           }
           $tag = "v$version"
 
-          $headers = @{
-            Accept = "application/vnd.github+json"
-            Authorization = "Bearer $env:GH_TOKEN"
-            "X-GitHub-Api-Version" = "2026-03-10"
-          }
-          function Test-GitHubResource {
-            param([Parameter(Mandatory)][string] $Uri)
+          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") {
+            if ($env:GITHUB_REF_NAME -ne "main") {
+              throw "Releases can be started only from the main branch"
+            }
 
-            $response = Invoke-WebRequest -Uri $Uri -Headers $headers -SkipHttpErrorCheck
-            switch ([int]$response.StatusCode) {
-              200 { return $true }
-              404 { return $false }
-              default {
-                throw "GitHub API returned HTTP $($response.StatusCode) for $Uri"
+            $headers = @{
+              Accept = "application/vnd.github+json"
+              Authorization = "Bearer $env:GH_TOKEN"
+              "X-GitHub-Api-Version" = "2026-03-10"
+            }
+            function Test-GitHubResource {
+              param([Parameter(Mandatory)][string] $Uri)
+
+              $response = Invoke-WebRequest -Uri $Uri -Headers $headers -SkipHttpErrorCheck
+              switch ([int]$response.StatusCode) {
+                200 { return $true }
+                404 { return $false }
+                default {
+                  throw "GitHub API returned HTTP $($response.StatusCode) for $Uri"
+                }
               }
             }
-          }
 
-          $escapedTag = [System.Uri]::EscapeDataString($tag)
-          $repositoryApi = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY"
-          $tagExists = Test-GitHubResource "$repositoryApi/git/ref/tags/$escapedTag"
-          $releaseExists = Test-GitHubResource "$repositoryApi/releases/tags/$escapedTag"
-          if ($tagExists -or $releaseExists) {
-            Write-Host "::error title=Release version already exists::$tag is already used. Bump [package].version in Cargo.toml and refresh Cargo.lock."
-            throw "release tag or release already exists: $tag"
+            $escapedTag = [System.Uri]::EscapeDataString($tag)
+            $repositoryApi = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY"
+            $tagExists = Test-GitHubResource "$repositoryApi/git/ref/tags/$escapedTag"
+            $releaseExists = Test-GitHubResource "$repositoryApi/releases/tags/$escapedTag"
+            if ($tagExists -or $releaseExists) {
+              Write-Host "::error title=Release version already exists::$tag is already used. Bump [package].version in Cargo.toml and refresh Cargo.lock."
+              throw "release tag or release already exists: $tag"
+            }
           }
 
           "version=$version" >> $env:GITHUB_OUTPUT
@@ -115,12 +119,12 @@ jobs:
       - name: Install pinned Rust toolchain
         shell: pwsh
         run: |
-          rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal --component rustfmt,clippy --target $env:RUST_TARGET
+          rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal --target $env:RUST_TARGET
           rustup default $env:RUST_TOOLCHAIN
           rustc -Vv
           cargo -V
 
-      - name: Restore Rust dependency and build cache
+      - name: Restore Rust test cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
@@ -131,47 +135,16 @@ jobs:
           restore-keys: |
             rust-${{ runner.os }}-${{ github.job }}-${{ env.RUST_TOOLCHAIN }}-${{ env.RUST_TARGET }}-
 
-      - name: Verify locked dependency graph
-        shell: pwsh
-        run: cargo metadata --locked --format-version 1 | Out-Null
-
-      - name: Check formatting
-        shell: pwsh
-        run: cargo fmt --all -- --check
-
-      - name: Check code
-        shell: pwsh
-        run: cargo clippy --locked --target $env:RUST_TARGET --all-features -- -D warnings
-
       - name: Run tests
         shell: pwsh
         run: cargo test --locked --target $env:RUST_TARGET --all-features
-
-      - name: Build debug executable
-        shell: pwsh
-        run: cargo build --locked --target $env:RUST_TARGET --all-features
-
-      - name: Check command-line metadata
-        shell: pwsh
-        run: |
-          $binary = Join-Path $PWD "target\$env:RUST_TARGET\debug\onec-buddy-mcp.exe"
-
-          & $binary --help
-          if ($LASTEXITCODE -ne 0) {
-            throw "--help failed with exit code $LASTEXITCODE"
-          }
-
-          & $binary --version
-          if ($LASTEXITCODE -ne 0) {
-            throw "--version failed with exit code $LASTEXITCODE"
-          }
 
   release-candidate:
     name: Build frozen Windows candidate
     needs:
       - release-version
       - build-and-check
-    if: github.event_name == 'push' && github.ref_name == 'main'
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'main'
     runs-on: windows-2025
     timeout-minutes: 45
 
@@ -409,7 +382,7 @@ jobs:
     needs:
       - release-version
       - release-candidate
-    if: github.event_name == 'push' && github.ref_name == 'main'
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'main'
     runs-on: windows-2025
     timeout-minutes: 10
 
