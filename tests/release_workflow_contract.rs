@@ -29,11 +29,25 @@ fn assert_contains_all(section_name: &str, section: &str, required: &[&str]) {
 }
 
 #[test]
-fn workflow_has_no_windows_only_global_rustflags() {
+fn workflow_scopes_static_msvc_rustflags_to_windows_jobs() {
+    let windows_check = job("build-and-check", Some("unix-build-and-check"));
+    let unix_checks = job("unix-build-and-check", Some("release-candidate"));
+    let windows_candidate = job("release-candidate", Some("unix-release-candidate"));
+    let unix_candidates = job("unix-release-candidate", Some("publish-release"));
+    let static_msvc_rustflags = "RUSTFLAGS: \"-C target-feature=+crt-static\"";
+
     assert!(
-        !WORKFLOW.contains("\nenv:\n  RUSTFLAGS: \"-C target-feature=+crt-static\""),
-        "static MSVC flags must remain target-scoped in .cargo/config.toml"
+        !WORKFLOW.contains("\nenv:\n  RUSTFLAGS:"),
+        "Windows-only Rust flags must not be defined globally"
     );
+    assert_contains_all("build-and-check", windows_check, &[static_msvc_rustflags]);
+    assert_contains_all(
+        "release-candidate",
+        windows_candidate,
+        &[static_msvc_rustflags],
+    );
+    assert!(!unix_checks.contains(static_msvc_rustflags));
+    assert!(!unix_candidates.contains(static_msvc_rustflags));
 }
 
 #[test]

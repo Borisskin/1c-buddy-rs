@@ -100,6 +100,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: "1"
+      RUSTFLAGS: "-C target-feature=+crt-static"
       RUST_TOOLCHAIN: "1.97.1"
       RUST_TARGET: x86_64-pc-windows-msvc
 
@@ -195,6 +196,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: "1"
+      RUSTFLAGS: "-C target-feature=+crt-static"
       RUST_TOOLCHAIN: "1.97.1"
       RUST_TARGET: x86_64-pc-windows-msvc
       ARCHIVE_NAME: onec-buddy-mcp-windows-x86_64.zip
