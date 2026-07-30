@@ -19,6 +19,34 @@ fn job(name: &str, next_name: Option<&str>) -> &'static str {
     }
 }
 
+fn top_level_mapping<'a>(document: &'a str, name: &str) -> Option<&'a str> {
+    let start_marker = format!("{name}:\n");
+    let body_start = if document.starts_with(&start_marker) {
+        start_marker.len()
+    } else {
+        let start_marker = format!("\n{start_marker}");
+        document.find(&start_marker)? + start_marker.len()
+    };
+    let body = &document[body_start..];
+    let mut body_end = body.len();
+    let mut offset = 0;
+
+    for line in body.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\r', '\n']);
+        if !content.is_empty()
+            && !content.starts_with(' ')
+            && !content.starts_with('\t')
+            && !content.starts_with('#')
+        {
+            body_end = offset;
+            break;
+        }
+        offset += line.len();
+    }
+
+    Some(&body[..body_end])
+}
+
 fn assert_contains_all(section_name: &str, section: &str, required: &[&str]) {
     for value in required {
         assert!(
@@ -29,15 +57,28 @@ fn assert_contains_all(section_name: &str, section: &str, required: &[&str]) {
 }
 
 #[test]
+fn top_level_env_includes_entries_after_the_first_variable_only() {
+    let fixture = "name: test\nenv:\n  FIRST: value\n  RUSTFLAGS: forbidden\njobs:\n  check:\n    env:\n      RUSTFLAGS: allowed\n";
+    let global_env =
+        top_level_mapping(fixture, "env").expect("fixture must define a top-level env mapping");
+
+    assert!(global_env.contains("RUSTFLAGS: forbidden"));
+    assert!(!global_env.contains("RUSTFLAGS: allowed"));
+}
+
+#[test]
 fn workflow_scopes_static_msvc_rustflags_to_windows_jobs() {
     let windows_check = job("build-and-check", Some("unix-build-and-check"));
     let unix_checks = job("unix-build-and-check", Some("release-candidate"));
     let windows_candidate = job("release-candidate", Some("unix-release-candidate"));
     let unix_candidates = job("unix-release-candidate", Some("publish-release"));
     let static_msvc_rustflags = "RUSTFLAGS: \"-C target-feature=+crt-static\"";
+    let global_env = top_level_mapping(WORKFLOW, "env").unwrap_or_default();
 
     assert!(
-        !WORKFLOW.contains("\nenv:\n  RUSTFLAGS:"),
+        !global_env
+            .lines()
+            .any(|line| line.trim_start().starts_with("RUSTFLAGS:")),
         "Windows-only Rust flags must not be defined globally"
     );
     assert_contains_all("build-and-check", windows_check, &[static_msvc_rustflags]);
