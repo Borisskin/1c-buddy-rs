@@ -1,4 +1,4 @@
-name: Windows
+name: Cross-platform
 
 on:
   pull_request:
@@ -10,11 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.workflow }}-${{ github.ref }}
+  group: cross-platform-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
-
-env:
-  RUSTFLAGS: "-C target-feature=+crt-static"
 
 jobs:
   release-version:
@@ -61,11 +58,7 @@ jobs:
           }
           $tag = "v$version"
 
-          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") {
-            if ($env:GITHUB_REF_NAME -ne "main") {
-              throw "Releases can be started only from the main branch"
-            }
-
+          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:GITHUB_REF_NAME -eq "main") {
             $headers = @{
               Accept = "application/vnd.github+json"
               Authorization = "Bearer $env:GH_TOKEN"
@@ -139,12 +132,63 @@ jobs:
         shell: pwsh
         run: cargo test --locked --target $env:RUST_TARGET --all-features
 
+  unix-build-and-check:
+    name: Verify ${{ matrix.platform }} target
+    needs: release-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform: macos-aarch64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      RUST_TOOLCHAIN: "1.97.1"
+      RUST_TARGET: ${{ matrix.target }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --target "${RUST_TARGET}"
+          rustup default "${RUST_TOOLCHAIN}"
+          rustc -Vv
+          cargo -V
+
+      - name: Restore Rust test cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ github.job }}-${{ env.RUST_TOOLCHAIN }}-${{ env.RUST_TARGET }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          restore-keys: |
+            rust-${{ runner.os }}-${{ github.job }}-${{ env.RUST_TOOLCHAIN }}-${{ env.RUST_TARGET }}-
+
+      - name: Run tests
+        shell: bash
+        run: cargo test --locked --target "${RUST_TARGET}" --all-features
+
   release-candidate:
     name: Build frozen Windows candidate
     needs:
       - release-version
       - build-and-check
-    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'main'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-2025
     timeout-minutes: 45
 
@@ -377,11 +421,181 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  unix-release-candidate:
+    name: Build frozen ${{ matrix.platform }} candidate
+    needs:
+      - release-version
+      - unix-build-and-check
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            archive_name: onec-buddy-mcp-linux-x86_64.tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform: macos-aarch64
+            archive_name: onec-buddy-mcp-macos-aarch64.tar.gz
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      RUST_TOOLCHAIN: "1.97.1"
+      RUST_TARGET: ${{ matrix.target }}
+      PLATFORM: ${{ matrix.platform }}
+      ARCHIVE_NAME: ${{ matrix.archive_name }}
+      PACKAGE_VERSION: ${{ needs.release-version.outputs.version }}
+      RELEASE_TAG: ${{ needs.release-version.outputs.tag }}
+
+    steps:
+      - name: Check out the verified source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --target "${RUST_TARGET}"
+          rustup default "${RUST_TOOLCHAIN}"
+
+      - name: Restore Rust dependency and build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ github.job }}-${{ env.RUST_TOOLCHAIN }}-${{ env.RUST_TARGET }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          restore-keys: |
+            rust-${{ runner.os }}-${{ github.job }}-${{ env.RUST_TOOLCHAIN }}-${{ env.RUST_TARGET }}-
+
+      - name: Record build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-evidence
+          {
+            echo "source_sha=${GITHUB_SHA}"
+            echo "package_version=${PACKAGE_VERSION}"
+            echo "release_tag=${RELEASE_TAG}"
+            echo "rust_target=${RUST_TARGET}"
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            echo "image_os=${ImageOS:-}"
+            echo "image_version=${ImageVersion:-}"
+            uname -a
+            rustc -Vv
+            cargo -V
+          } > "release-evidence/${PLATFORM}-BUILD_ENVIRONMENT.txt"
+
+      - name: Build release executable once
+        shell: bash
+        run: cargo build --release --locked --target "${RUST_TARGET}"
+
+      - name: Inspect and freeze candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/${RUST_TARGET}/release/onec-buddy-mcp"
+          test -f "${binary}"
+          test -x "${binary}"
+          file "${binary}" | tee "release-evidence/${PLATFORM}-FILE.txt"
+
+          case "${PLATFORM}" in
+            linux-x86_64)
+              file "${binary}" | grep -Eiq 'ELF 64-bit.*x86-64'
+              ;;
+            macos-aarch64)
+              file "${binary}" | grep -Eiq 'Mach-O 64-bit.*arm64'
+              ;;
+            *)
+              echo "unsupported release platform: ${PLATFORM}" >&2
+              exit 1
+              ;;
+          esac
+
+          mkdir -p release-stage
+          install -m 0755 "${binary}" release-stage/onec-buddy-mcp
+          cp README.md README_FULL.md LICENSE .env.example release-stage/
+
+          binary_hash="$(shasum -a 256 release-stage/onec-buddy-mcp | awk '{print $1}')"
+          printf '%s  %s\n' "${binary_hash}" "onec-buddy-mcp" \
+            > "release-evidence/BINARY_SHA256-${PLATFORM}.txt"
+          printf 'BINARY_SHA256=%s\n' "${binary_hash}" >> "${GITHUB_ENV}"
+
+      - name: Package and verify frozen candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-output
+          archive="release-output/${ARCHIVE_NAME}"
+          tar -czf "${archive}" -C release-stage \
+            onec-buddy-mcp README.md README_FULL.md LICENSE .env.example
+
+          expected_entries="$(printf '%s\n' \
+            .env.example LICENSE README.md README_FULL.md onec-buddy-mcp | sort)"
+          actual_entries="$(tar -tzf "${archive}" | sed 's#^\./##' | sort)"
+          if [[ "${actual_entries}" != "${expected_entries}" ]]; then
+            echo "archive entries do not match the required files" >&2
+            diff -u <(printf '%s\n' "${expected_entries}") \
+              <(printf '%s\n' "${actual_entries}") || true
+            exit 1
+          fi
+
+          embedded_hash="$(tar -xOzf "${archive}" onec-buddy-mcp | shasum -a 256 | awk '{print $1}')"
+          if [[ "${embedded_hash}" != "${BINARY_SHA256}" ]]; then
+            echo "embedded executable SHA-256 differs from the frozen candidate" >&2
+            exit 1
+          fi
+
+          archive_hash="$(shasum -a 256 "${archive}" | awk '{print $1}')"
+          export ARCHIVE_SHA256="${archive_hash}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          metadata = {
+              "schema_version": 1,
+              "package_name": "onec-buddy-mcp",
+              "package_version": os.environ["PACKAGE_VERSION"],
+              "release_tag": os.environ["RELEASE_TAG"],
+              "source_sha": os.environ["GITHUB_SHA"],
+              "platform": os.environ["PLATFORM"],
+              "rust_target": os.environ["RUST_TARGET"],
+              "archive_name": os.environ["ARCHIVE_NAME"],
+              "binary_sha256": os.environ["BINARY_SHA256"],
+              "archive_sha256": os.environ["ARCHIVE_SHA256"],
+          }
+          path = Path("release-evidence") / f"RELEASE_METADATA-{os.environ['PLATFORM']}.json"
+          path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload candidate and evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: onec-buddy-mcp-candidate-${{ matrix.platform }}-${{ github.sha }}
+          path: |
+            release-output/${{ matrix.archive_name }}
+            release-evidence/${{ matrix.platform }}-BUILD_ENVIRONMENT.txt
+            release-evidence/${{ matrix.platform }}-FILE.txt
+            release-evidence/BINARY_SHA256-${{ matrix.platform }}.txt
+            release-evidence/RELEASE_METADATA-${{ matrix.platform }}.json
+          if-no-files-found: error
+          retention-days: 30
+
   publish-release:
     name: Publish GitHub release
     needs:
       - release-version
       - release-candidate
+      - unix-release-candidate
     if: github.event_name == 'workflow_dispatch' && github.ref_name == 'main'
     runs-on: windows-2025
     timeout-minutes: 10
@@ -391,7 +605,9 @@ jobs:
       contents: write
 
     env:
-      ARCHIVE_NAME: onec-buddy-mcp-windows-x86_64.zip
+      WINDOWS_ARCHIVE_NAME: onec-buddy-mcp-windows-x86_64.zip
+      LINUX_ARCHIVE_NAME: onec-buddy-mcp-linux-x86_64.tar.gz
+      MACOS_ARCHIVE_NAME: onec-buddy-mcp-macos-aarch64.tar.gz
       PACKAGE_VERSION: ${{ needs.release-version.outputs.version }}
       RELEASE_TAG: ${{ needs.release-version.outputs.tag }}
       SOURCE_SHA: ${{ github.sha }}
@@ -401,7 +617,19 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: onec-buddy-mcp-candidate-${{ github.sha }}
-          path: publication
+          path: publication/windows
+
+      - name: Download the verified Linux candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: onec-buddy-mcp-candidate-linux-x86_64-${{ github.sha }}
+          path: publication/linux
+
+      - name: Download the verified macOS candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: onec-buddy-mcp-candidate-macos-aarch64-${{ github.sha }}
+          path: publication/macos
 
       - name: Verify and publish the frozen candidate
         shell: pwsh
@@ -409,12 +637,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $root = Join-Path $PWD "publication"
-          $archive = Join-Path $root "release-output\$env:ARCHIVE_NAME"
-          $checksums = Join-Path $root "release-output\SHA256SUMS.txt"
-          $metadataPath = Join-Path $root "release-evidence\RELEASE_METADATA.json"
-          $exeHashPath = Join-Path $root "release-evidence\EXE_SHA256.txt"
+          $windowsRoot = Join-Path $root "windows"
+          $archive = Join-Path $windowsRoot "release-output\$env:WINDOWS_ARCHIVE_NAME"
+          $windowsChecksums = Join-Path $windowsRoot "release-output\SHA256SUMS.txt"
+          $metadataPath = Join-Path $windowsRoot "release-evidence\RELEASE_METADATA.json"
+          $exeHashPath = Join-Path $windowsRoot "release-evidence\EXE_SHA256.txt"
 
-          foreach ($requiredFile in @($archive, $checksums, $metadataPath, $exeHashPath)) {
+          foreach ($requiredFile in @($archive, $windowsChecksums, $metadataPath, $exeHashPath)) {
             if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
               throw "verified artifact file is missing: $requiredFile"
             }
@@ -427,7 +656,7 @@ jobs:
             package_version = $env:PACKAGE_VERSION
             release_tag = $env:RELEASE_TAG
             source_sha = $env:SOURCE_SHA
-            archive_name = $env:ARCHIVE_NAME
+            archive_name = $env:WINDOWS_ARCHIVE_NAME
           }
           foreach ($entry in $expectedMetadata.GetEnumerator()) {
             $actual = "$($metadata.($entry.Key))"
@@ -441,13 +670,13 @@ jobs:
             throw "downloaded archive SHA-256 differs from release metadata"
           }
 
-          $checksumLines = @(Get-Content -LiteralPath $checksums)
-          $archiveChecksumLine = "$archiveHash  $env:ARCHIVE_NAME"
+          $windowsChecksumLines = @(Get-Content -LiteralPath $windowsChecksums)
+          $archiveChecksumLine = "$archiveHash  $env:WINDOWS_ARCHIVE_NAME"
           $exeChecksumLine = "$($metadata.exe_sha256)  onec-buddy-mcp.exe"
-          if ($checksumLines -cnotcontains $archiveChecksumLine) {
+          if ($windowsChecksumLines -cnotcontains $archiveChecksumLine) {
             throw "SHA256SUMS.txt does not contain the verified archive hash"
           }
-          if ($checksumLines -cnotcontains $exeChecksumLine) {
+          if ($windowsChecksumLines -cnotcontains $exeChecksumLine) {
             throw "SHA256SUMS.txt does not contain the verified executable hash"
           }
           if ((Get-Content -LiteralPath $exeHashPath -Raw).Trim() -cne $exeChecksumLine) {
@@ -479,6 +708,114 @@ jobs:
           if ($embeddedHash -cne "$($metadata.exe_sha256)") {
             throw "embedded executable SHA-256 differs from release metadata"
           }
+
+          $releaseArchives = [ordered]@{
+            windows = $archive
+          }
+          $releaseMetadata = [ordered]@{
+            windows = $metadataPath
+          }
+          $releaseChecksumLines = @($archiveChecksumLine)
+          $unixCandidates = @(
+            [ordered]@{
+              root = Join-Path $root "linux"
+              platform = "linux-x86_64"
+              rust_target = "x86_64-unknown-linux-gnu"
+              archive_name = $env:LINUX_ARCHIVE_NAME
+            }
+            [ordered]@{
+              root = Join-Path $root "macos"
+              platform = "macos-aarch64"
+              rust_target = "aarch64-apple-darwin"
+              archive_name = $env:MACOS_ARCHIVE_NAME
+            }
+          )
+
+          foreach ($candidate in $unixCandidates) {
+            $unixArchive = Join-Path $candidate.root "release-output\$($candidate.archive_name)"
+            $unixMetadataPath = Join-Path $candidate.root `
+              "release-evidence\RELEASE_METADATA-$($candidate.platform).json"
+            $binaryHashPath = Join-Path $candidate.root `
+              "release-evidence\BINARY_SHA256-$($candidate.platform).txt"
+
+            foreach ($requiredFile in @($unixArchive, $unixMetadataPath, $binaryHashPath)) {
+              if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
+                throw "verified artifact file is missing: $requiredFile"
+              }
+            }
+
+            $unixMetadata = Get-Content -LiteralPath $unixMetadataPath -Raw | ConvertFrom-Json
+            $expectedUnixMetadata = [ordered]@{
+              schema_version = "1"
+              package_name = "onec-buddy-mcp"
+              package_version = $env:PACKAGE_VERSION
+              release_tag = $env:RELEASE_TAG
+              source_sha = $env:SOURCE_SHA
+              platform = $candidate.platform
+              rust_target = $candidate.rust_target
+              archive_name = $candidate.archive_name
+            }
+            foreach ($entry in $expectedUnixMetadata.GetEnumerator()) {
+              $actual = "$($unixMetadata.($entry.Key))"
+              if ($actual -cne $entry.Value) {
+                throw "release metadata mismatch for $($entry.Key): expected '$($entry.Value)', found '$actual'"
+              }
+            }
+
+            $unixArchiveHash = (
+              Get-FileHash -LiteralPath $unixArchive -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            if ($unixArchiveHash -cne "$($unixMetadata.archive_sha256)") {
+              throw "downloaded archive SHA-256 differs from release metadata"
+            }
+
+            $binaryChecksumLine = "$($unixMetadata.binary_sha256)  onec-buddy-mcp"
+            if ((Get-Content -LiteralPath $binaryHashPath -Raw).Trim() -cne $binaryChecksumLine) {
+              throw "binary SHA-256 evidence does not match release metadata"
+            }
+
+            $archiveEntries = @(& tar -tzf $unixArchive | ForEach-Object {
+              $_ -replace '^\./', ''
+            } | Sort-Object)
+            if ($LASTEXITCODE -ne 0) {
+              throw "tar could not list archive $unixArchive"
+            }
+            $expectedArchiveEntries = @(
+              ".env.example"
+              "LICENSE"
+              "README.md"
+              "README_FULL.md"
+              "onec-buddy-mcp"
+            )
+            if (
+              $archiveEntries.Count -ne $expectedArchiveEntries.Count -or
+              (Compare-Object -ReferenceObject $expectedArchiveEntries `
+                -DifferenceObject $archiveEntries)
+            ) {
+              throw "archive entries do not match the required files: $unixArchive"
+            }
+
+            $verifyDirectory = Join-Path $root "verify-$($candidate.platform)"
+            New-Item -ItemType Directory -Path $verifyDirectory | Out-Null
+            & tar -xzf $unixArchive -C $verifyDirectory "onec-buddy-mcp"
+            if ($LASTEXITCODE -ne 0) {
+              throw "tar could not extract executable from $unixArchive"
+            }
+            $embeddedBinary = Join-Path $verifyDirectory "onec-buddy-mcp"
+            $embeddedHash = (
+              Get-FileHash -LiteralPath $embeddedBinary -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            if ($embeddedHash -cne "$($unixMetadata.binary_sha256)") {
+              throw "embedded executable SHA-256 differs from release metadata"
+            }
+
+            $releaseArchives[$candidate.platform] = $unixArchive
+            $releaseMetadata[$candidate.platform] = $unixMetadataPath
+            $releaseChecksumLines += "$unixArchiveHash  $($candidate.archive_name)"
+          }
+
+          $checksums = Join-Path $root "SHA256SUMS.txt"
+          $releaseChecksumLines | Set-Content -LiteralPath $checksums -Encoding ascii
 
           $headers = @{
             Accept = "application/vnd.github+json"
@@ -512,8 +849,12 @@ jobs:
             --title "onec-buddy-mcp $env:RELEASE_TAG" `
             --generate-notes `
             "$archive#Windows x86-64 package" `
+            "$($releaseArchives['linux-x86_64'])#Linux x86-64 package" `
+            "$($releaseArchives['macos-aarch64'])#macOS Apple Silicon package" `
             "$checksums#SHA-256 checksums" `
-            "$metadataPath#Release metadata"
+            "$metadataPath#Windows release metadata" `
+            "$($releaseMetadata['linux-x86_64'])#Linux release metadata" `
+            "$($releaseMetadata['macos-aarch64'])#macOS release metadata"
           if ($LASTEXITCODE -ne 0) {
             throw "gh release create failed with exit code $LASTEXITCODE"
           }

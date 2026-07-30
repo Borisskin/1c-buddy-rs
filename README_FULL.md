@@ -2,55 +2,108 @@
 
 `onec-buddy-mcp` подключает Codex, Cursor и Claude Desktop к «1С:Напарнику» по протоколу MCP. Сервер работает локально через стандартный ввод-вывод, не открывает входящий порт и не предоставляет веб-интерфейс.
 
-Готовая поставка поддерживает Windows x86-64. В архив входит исполняемый файл `onec-buddy-mcp.exe`, собранный для `x86_64-pc-windows-msvc` со статически подключённой средой выполнения MSVC.
+Готовая поставка поддерживает три цели:
+
+| Система | Архив | Цель Rust | Исполняемый файл |
+|---|---|---|---|
+| Windows x86-64 | `onec-buddy-mcp-windows-x86_64.zip` | `x86_64-pc-windows-msvc` | `onec-buddy-mcp.exe` |
+| Linux x86-64 | `onec-buddy-mcp-linux-x86_64.tar.gz` | `x86_64-unknown-linux-gnu` | `onec-buddy-mcp` |
+| macOS Apple Silicon | `onec-buddy-mcp-macos-aarch64.tar.gz` | `aarch64-apple-darwin` | `onec-buddy-mcp` |
+
+Windows-файл использует статически подключённую среду выполнения MSVC. Поставка Linux рассчитана на x86-64 и GNU libc. Поставка macOS рассчитана только на компьютеры Apple Silicon; файл не подписан сертификатом Apple и не прошёл нотариальное заверение.
 
 ## Быстрый старт
 
-1. Скачайте `onec-buddy-mcp-windows-x86_64.zip` и распакуйте его в постоянный локальный каталог, например `C:\tools\onec-buddy-mcp`.
-2. Задайте личный токен «1С:Напарника» как переменную пользователя Windows:
+1. Скачайте архив для своей системы из одного выпуска и сверьте его SHA-256 с `SHA256SUMS.txt`.
+2. Распакуйте архив в постоянный локальный каталог. В Linux и macOS разрешите выполнение файла командой `chmod 0755`.
+3. Задайте личный токен «1С:Напарника» перед запуском Codex:
 
    ```powershell
+   # Windows
    setx.exe ONEC_AI_TOKEN "<ваш_токен>"
    ```
 
-3. Добавьте сервер в `%USERPROFILE%\.codex\config.toml`:
+   ```sh
+   # Linux или macOS: запустите Codex из этого же терминала
+   export ONEC_AI_TOKEN="<ваш_токен>"
+   ```
+
+4. Добавьте сервер в `~/.codex/config.toml` и укажите настоящий абсолютный путь:
 
    ```toml
    [mcp_servers.onec_buddy]
-   command = 'C:\tools\onec-buddy-mcp\onec-buddy-mcp.exe'
+   command = "/абсолютный/путь/onec-buddy-mcp"
    env_vars = ['ONEC_AI_TOKEN']
    ```
 
-4. Полностью перезапустите Codex. В списке MCP-серверов должен появиться `onec_buddy` с восемью инструментами.
+5. Полностью перезапустите Codex. В списке MCP-серверов должен появиться `onec_buddy` с восемью инструментами.
 
 ## Состав поставки
 
-Архив `onec-buddy-mcp-windows-x86_64.zip` содержит ровно пять файлов:
+Каждый из трёх архивов содержит ровно пять файлов:
 
 | Файл | Назначение |
 |---|---|
-| `onec-buddy-mcp.exe` | MCP-сервер для Windows x86-64 |
+| `onec-buddy-mcp.exe` или `onec-buddy-mcp` | MCP-сервер для выбранной системы |
 | `README.md` | Краткое описание и быстрый старт |
 | `README_FULL.md` | Это подробное руководство |
 | `LICENSE` | Текст лицензии |
 | `.env.example` | Справочник переменных окружения |
 
-Рядом с архивом публикуется `SHA256SUMS.txt` с контрольными суммами исполняемого файла и архива. Проверьте архив до распаковки:
+Рядом с архивами публикуется общий `SHA256SUMS.txt` с контрольными суммами трёх архивов. Проверьте скачанный архив до распаковки.
+
+Windows:
 
 ```powershell
 (Get-FileHash -LiteralPath ".\onec-buddy-mcp-windows-x86_64.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
 Get-Content -LiteralPath ".\SHA256SUMS.txt"
 ```
 
-Полученное значение должно совпасть со строкой для `onec-buddy-mcp-windows-x86_64.zip`.
+Linux:
+
+```sh
+sha256sum onec-buddy-mcp-linux-x86_64.tar.gz
+grep 'onec-buddy-mcp-linux-x86_64.tar.gz' SHA256SUMS.txt
+```
+
+macOS:
+
+```sh
+shasum -a 256 onec-buddy-mcp-macos-aarch64.tar.gz
+grep 'onec-buddy-mcp-macos-aarch64.tar.gz' SHA256SUMS.txt
+```
+
+Вычисленное значение должно совпасть со строкой выбранного архива.
 
 ## Установка
 
-1. Создайте постоянный локальный каталог без ограничений на запуск программ, например `C:\tools\onec-buddy-mcp`.
-2. Распакуйте в него все пять файлов. Для работы нужен `onec-buddy-mcp.exe`; остальные файлы сохраняют инструкции, пример настроек и условия лицензии.
-3. Выберите ровно один источник токена и задайте его до запуска клиента MCP.
-4. Укажите абсолютный путь к `onec-buddy-mcp.exe` в настройках клиента.
-5. Полностью перезапустите клиент, чтобы он получил обновлённое окружение.
+### Windows
+
+1. Создайте постоянный каталог, например `C:\tools\onec-buddy-mcp`.
+2. Распакуйте в него все пять файлов.
+3. Укажите в настройках клиента абсолютный путь `C:\tools\onec-buddy-mcp\onec-buddy-mcp.exe`.
+
+### Linux
+
+```sh
+mkdir -p "$HOME/.local/lib/onec-buddy-mcp"
+tar -xzf onec-buddy-mcp-linux-x86_64.tar.gz -C "$HOME/.local/lib/onec-buddy-mcp"
+chmod 0755 "$HOME/.local/lib/onec-buddy-mcp/onec-buddy-mcp"
+```
+
+В настройках клиента укажите раскрытый абсолютный путь, например `/home/alice/.local/lib/onec-buddy-mcp/onec-buddy-mcp`. Не записывайте `$HOME` или `~`: клиент запускает файл напрямую, без оболочки.
+
+### macOS
+
+```sh
+mkdir -p "$HOME/.local/lib/onec-buddy-mcp"
+tar -xzf onec-buddy-mcp-macos-aarch64.tar.gz -C "$HOME/.local/lib/onec-buddy-mcp"
+chmod 0755 "$HOME/.local/lib/onec-buddy-mcp/onec-buddy-mcp"
+```
+
+В настройках клиента укажите раскрытый абсолютный путь, например `/Users/alice/.local/lib/onec-buddy-mcp/onec-buddy-mcp`. Выпуск не подписан и не заверен Apple. Если macOS блокирует первый запуск, проверьте источник и контрольную сумму файла, затем используйте штатное подтверждение в разделе «Конфиденциальность и безопасность» системных настроек. Руководство намеренно не предлагает отключать Gatekeeper.
+
+Для любой системы выберите ровно один источник токена, задайте его до запуска клиента MCP и полностью перезапустите клиент после изменения окружения.
 
 Аргументы и подкоманда запуска не нужны. Каждый клиент запускает отдельный процесс сервера.
 
@@ -58,7 +111,7 @@ Get-Content -LiteralPath ".\SHA256SUMS.txt"
 
 Сервер принимает ровно один источник личного токена:
 
-- `ONEC_AI_TOKEN` — переменная окружения пользователя или системы Windows;
+- `ONEC_AI_TOKEN` — переменная окружения процесса;
 - `ONEC_AI_TOKEN_FILE` — абсолютный локальный путь к обычному файлу.
 
 Одновременное задание двух источников или отсутствие обоих приводит к ошибке запуска. Учитывается окружение процесса: если клиент уже запущен, он не увидит новую переменную до полного перезапуска.
@@ -91,17 +144,33 @@ setx.exe ONEC_AI_TOKEN "<ваш_токен>" /M
 
 Для системной переменной замените `User` на `Machine` и запустите PowerShell с правами администратора.
 
+### Токен в переменной Linux или macOS
+
+Для текущего терминала:
+
+```sh
+export ONEC_AI_TOKEN="<ваш_токен>"
+```
+
+Запустите Codex или другой клиент из этого же терминала. Не записывайте значение токена в `config.toml`, `mcp.json`, аргументы командной строки или журнал оболочки.
+
 ### Токен в файле
 
-Вместо значения токена можно передать путь:
+Вместо значения токена можно передать путь. Windows:
 
 ```powershell
 setx.exe ONEC_AI_TOKEN_FILE "C:\Secrets\onec-ai-token.txt"
 ```
 
-`ONEC_AI_TOKEN_FILE` должен указывать на обычный локальный файл по абсолютному пути. Каталоги, ссылки, другие точки повторной обработки Windows, UNC-пути и служебные имена Windows не принимаются. Токен должен быть в UTF-8, без пробелов и управляющих знаков по краям; допустим один завершающий перевод строки. Значение токена и файл ограничены 8 КиБ.
+Linux или macOS:
 
-[`.env.example`](.env.example) перечисляет все переменные и значения по умолчанию, но сервер не загружает этот файл автоматически. Переименование файла в `.env` также ничего не меняет: переменные должен передать Windows или программа, которая запускает сервер.
+```sh
+export ONEC_AI_TOKEN_FILE="/абсолютный/путь/onec-ai-token.txt"
+```
+
+`ONEC_AI_TOKEN_FILE` должен указывать на обычный локальный файл по абсолютному пути. Каталоги, символические ссылки и сетевые пути не принимаются; в Windows также запрещены другие точки повторной обработки и служебные имена. Токен должен быть в UTF-8, без пробелов и управляющих знаков по краям; допустим один завершающий перевод строки. Значение токена и файл ограничены 8 КиБ.
+
+[`.env.example`](.env.example) перечисляет все переменные и значения по умолчанию, но сервер не загружает этот файл автоматически. Переименование файла в `.env` также ничего не меняет: переменные должна передать операционная система или программа, которая запускает сервер.
 
 Примеры подключения ниже используют `ONEC_AI_TOKEN` из окружения клиента.
 
@@ -109,15 +178,23 @@ setx.exe ONEC_AI_TOKEN_FILE "C:\Secrets\onec-ai-token.txt"
 
 ### Codex
 
-Codex хранит настройки MCP в `%USERPROFILE%\.codex\config.toml` или в `.codex\config.toml` доверенного проекта. Формат соответствует разделу [Model Context Protocol](https://learn.chatgpt.com/docs/extend/mcp.md) официального руководства Codex.
+Codex хранит пользовательские настройки MCP в `~/.codex/config.toml`: в Windows это `%USERPROFILE%\.codex\config.toml`, в Linux и macOS — файл `.codex/config.toml` в домашнем каталоге. Также можно использовать `.codex/config.toml` доверенного проекта. Формат соответствует разделу [Model Context Protocol](https://learn.chatgpt.com/docs/extend/mcp.md) официального руководства Codex.
 
 Пример с передачей `ONEC_AI_TOKEN` из локального окружения Codex:
 
 ```toml
 [mcp_servers.onec_buddy]
-command = 'C:\tools\onec-buddy-mcp\onec-buddy-mcp.exe'
+command = "/абсолютный/путь/onec-buddy-mcp"
 env_vars = ['ONEC_AI_TOKEN']
 ```
+
+Примеры значения `command`:
+
+| Система | Абсолютный путь |
+|---|---|
+| Windows | `C:\tools\onec-buddy-mcp\onec-buddy-mcp.exe` |
+| Linux | `/home/alice/.local/lib/onec-buddy-mcp/onec-buddy-mcp` |
+| macOS | `/Users/alice/.local/lib/onec-buddy-mcp/onec-buddy-mcp` |
 
 После сохранения настройки полностью перезапустите Codex и проверьте наличие восьми инструментов MCP.
 
@@ -143,6 +220,8 @@ Cursor читает настройки MCP из `%USERPROFILE%\.cursor\mcp.json`
 
 После сохранения настройки полностью завершите Cursor, запустите его снова, откройте настройки MCP и проверьте, что `onec-buddy` включён и публикует восемь инструментов.
 
+В Linux замените значение `command` на `/home/alice/.local/lib/onec-buddy-mcp/onec-buddy-mcp`, в macOS — на `/Users/alice/.local/lib/onec-buddy-mcp/onec-buddy-mcp`. Используйте имя и домашний каталог настоящего пользователя.
+
 ### Claude Desktop
 
 Claude Desktop читает `%APPDATA%\Claude\claude_desktop_config.json`. Абсолютный путь соответствует официальному руководству [Connect to local MCP servers](https://modelcontextprotocol.io/docs/develop/connect-local-servers). Пример не дублирует токен: сервер наследует `ONEC_AI_TOKEN` из окружения Claude Desktop.
@@ -162,6 +241,8 @@ Claude Desktop читает `%APPDATA%\Claude\claude_desktop_config.json`. Аб�
 <!-- END CLAUDE CONFIG -->
 
 После задания переменной и сохранения настройки полностью завершите Claude Desktop, запустите его снова и проверьте `onec-buddy` в разделе подключённых инструментов.
+
+В Linux замените значение `command` на `/home/alice/.local/lib/onec-buddy-mcp/onec-buddy-mcp`, в macOS — на `/Users/alice/.local/lib/onec-buddy-mcp/onec-buddy-mcp`. Используйте имя и домашний каталог настоящего пользователя.
 
 Во всех показанных настройках используется `ONEC_AI_TOKEN` из окружения агента. Не добавляйте значение токена в файл настройки или `args`, не задавайте одновременно `ONEC_AI_TOKEN_FILE` и не указывайте адрес либо порт.
 
@@ -233,7 +314,7 @@ Claude Desktop читает `%APPDATA%\Claude\claude_desktop_config.json`. Аб�
 
 ### Клиент не показывает сервер или инструменты
 
-Проверьте абсолютный путь к `onec-buddy-mcp.exe`, имя раздела в настройках и полностью перезапустите клиент. Сервер не показывает окно и не открывает порт: клиент должен запускать его как дочерний процесс через стандартный ввод-вывод.
+Проверьте абсолютный путь к `onec-buddy-mcp.exe` или `onec-buddy-mcp`, право на выполнение в Linux и macOS, имя раздела в настройках и полностью перезапустите клиент. Сервер не показывает окно и не открывает порт: клиент должен запускать его как дочерний процесс через стандартный ввод-вывод.
 
 ### Сервер сообщает об источнике токена
 
