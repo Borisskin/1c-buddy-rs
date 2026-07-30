@@ -85,6 +85,7 @@ fn unix_release_candidates_have_stable_names_and_verify_their_archives() {
             "target: aarch64-apple-darwin",
             "archive_name: onec-buddy-mcp-macos-aarch64.tar.gz",
             "cargo build --release --locked --target",
+            "- name: Package and verify frozen candidate\n        shell: bash\n        env:\n          COPYFILE_DISABLE: \"1\"",
             "tar -czf",
             "tar -tzf",
             "shasum -a 256",
