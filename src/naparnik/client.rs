@@ -30,9 +30,9 @@ use crate::naparnik::types::Conversation;
 
 #[cfg(test)]
 const TEST_AUTHORIZATION: &str = "test-placeholder-not-a-real-token";
-const ACCEPT_LANGUAGE_VALUE: &str = "ru-ru,en-us;q=0.8,en;q=0.7";
+const ACCEPT_LANGUAGE_VALUE: &str = "en-us;q=0.8,en;q=0.7";
 const USER_AGENT_VALUE: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
-AppleWebKit/620.1 (KHTML, like Gecko) JavaFX/22 Safari/620.1";
+AppleWebKit/620.1 (KHTML, like Gecko) JavaFX/17 Version/18.4 Safari/620.1";
 
 #[derive(Clone)]
 pub struct CallContext {
@@ -370,11 +370,11 @@ impl NaparnikClient {
     fn headers(&self, accept: &'static str) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static(accept));
-        headers.insert(ACCEPT_CHARSET, HeaderValue::from_static("utf-8"));
         headers.insert(
-            ACCEPT_ENCODING,
-            HeaderValue::from_static("gzip, deflate, br"),
+            ACCEPT_CHARSET,
+            HeaderValue::from_static("ISO-8859-1,utf-8;q=0.7,*;q=0.7"),
         );
+        headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("gzip, inflate"));
         headers.insert(
             ACCEPT_LANGUAGE,
             HeaderValue::from_static(ACCEPT_LANGUAGE_VALUE),
@@ -385,9 +385,18 @@ impl NaparnikClient {
             REFERER,
             HeaderValue::from_static("https://code.1c.ai/chat/"),
         );
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers.insert(
-            CONTENT_TYPE,
-            HeaderValue::from_static("application/json; charset=utf-8"),
+            HeaderName::from_static("sec-fetch-dest"),
+            HeaderValue::from_static("empty"),
+        );
+        headers.insert(
+            HeaderName::from_static("sec-fetch-mode"),
+            HeaderValue::from_static("cors"),
+        );
+        headers.insert(
+            HeaderName::from_static("sec-fetch-site"),
+            HeaderValue::from_static("same-origin"),
         );
         headers.insert(
             HeaderName::from_static("session-id"),
@@ -912,17 +921,20 @@ mod tests {
         assert_eq!(request.path, "/chat_api/v1/conversations/");
         for (name, expected) in [
             ("accept", "*/*"),
-            ("accept-charset", "utf-8"),
-            ("accept-encoding", "gzip, deflate, br"),
-            ("accept-language", "ru-ru,en-us;q=0.8,en;q=0.7"),
+            ("accept-charset", "ISO-8859-1,utf-8;q=0.7,*;q=0.7"),
+            ("accept-encoding", "gzip, inflate"),
+            ("accept-language", "en-us;q=0.8,en;q=0.7"),
             ("authorization", TEST_AUTHORIZATION),
             ("origin", "https://code.1c.ai"),
             ("referer", "https://code.1c.ai/chat/"),
-            ("content-type", "application/json; charset=utf-8"),
+            ("content-type", "application/json"),
+            ("sec-fetch-dest", "empty"),
+            ("sec-fetch-mode", "cors"),
+            ("sec-fetch-site", "same-origin"),
             ("session-id", ""),
             (
                 "user-agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/620.1 (KHTML, like Gecko) JavaFX/22 Safari/620.1",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/620.1 (KHTML, like Gecko) JavaFX/17 Version/18.4 Safari/620.1",
             ),
         ] {
             assert_eq!(
