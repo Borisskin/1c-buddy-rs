@@ -716,9 +716,6 @@ jobs:
           $releaseArchives = [ordered]@{
             windows = $archive
           }
-          $releaseMetadata = [ordered]@{
-            windows = $metadataPath
-          }
           $releaseChecksumLines = @($archiveChecksumLine)
           $unixCandidates = @(
             [ordered]@{
@@ -814,7 +811,6 @@ jobs:
             }
 
             $releaseArchives[$candidate.platform] = $unixArchive
-            $releaseMetadata[$candidate.platform] = $unixMetadataPath
             $releaseChecksumLines += "$unixArchiveHash  $($candidate.archive_name)"
           }
 
@@ -850,15 +846,12 @@ jobs:
           gh release create $env:RELEASE_TAG `
             --repo $env:GITHUB_REPOSITORY `
             --target $env:SOURCE_SHA `
-            --title "onec-buddy-mcp $env:RELEASE_TAG" `
+            --title "$env:PACKAGE_VERSION" `
             --generate-notes `
             "$archive#Windows x86-64 package" `
             "$($releaseArchives['linux-x86_64'])#Linux x86-64 package" `
             "$($releaseArchives['macos-aarch64'])#macOS Apple Silicon package" `
-            "$checksums#SHA-256 checksums" `
-            "$metadataPath#Windows release metadata" `
-            "$($releaseMetadata['linux-x86_64'])#Linux release metadata" `
-            "$($releaseMetadata['macos-aarch64'])#macOS release metadata"
+            "$checksums#SHA-256 checksums"
           if ($LASTEXITCODE -ne 0) {
             throw "gh release create failed with exit code $LASTEXITCODE"
           }

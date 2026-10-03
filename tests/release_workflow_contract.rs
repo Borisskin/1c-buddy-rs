@@ -188,6 +188,19 @@ fn publication_requires_and_verifies_all_three_platform_packages() {
             "SHA256SUMS.txt",
             "Get-FileHash",
             "gh release create",
+            "--title \"$env:PACKAGE_VERSION\"",
         ],
     );
+
+    let release_command = publication
+        .split_once("gh release create")
+        .and_then(|(_, tail)| tail.split_once("if ($LASTEXITCODE"))
+        .map(|(command, _)| command)
+        .expect("publish-release must check the release command result");
+    for internal_evidence in ["$metadataPath", "$releaseMetadata", "release metadata"] {
+        assert!(
+            !release_command.contains(internal_evidence),
+            "public release must not attach internal evidence: {internal_evidence}"
+        );
+    }
 }
